@@ -21,6 +21,26 @@
 - Git: 구현은 **새 브랜치**에서 진행, 커밋까지만(merge/push는 사용자). 선행 repo 변경도 그 repo의 새 브랜치에서.
 - 절대 경로 기준: 신규 프로젝트 `~/Desktop/econ_camera_ws`, 선행 프로젝트 `~/Desktop/Multi-Cam_module_test`.
 
+## 구현 참고 노트 (선행 프로젝트에서 검증된 사항)
+
+나중 세션이 실수로 되돌리지 않도록, `../Multi-Cam_module_test`에서 검증된 함정을 기록한다.
+
+- **`nvvidconv`는 `nvjpegenc` 앞에 필수** — 스케일링이 없어도 제거 금지. `nvjpegenc`는 NVMM
+  입력을 요구하며, `v4l2src`(시스템 메모리 UYVY) → `nvvidconv`(NVMM 변환) → `nvjpegenc` 순서라야
+  동작한다. 선행 `econ_cam/gst_pipeline.py`의 풀해상도 캡처 갈래도 동일하게 nvvidconv를 거친다.
+- **`frame_sync`는 파이프라인 PLAYING 전에 설정** — `capture_node`가 스트리밍 시작 전에
+  `controls.set_frame_sync`를 호출한다(Task 3 반영). 스트리밍 중 변경은 반영 안 될 수 있다.
+- **연속 4×풀해상도 JPEG는 새로운 부하 프로파일** — 선행 프로젝트는 풀해상도 JPEG를 *촬영 순간에만*
+  (valve gated) 인코딩했고, 상시 인코딩은 저해상도 프리뷰뿐이었다. 4대 상시 풀해상도 `nvjpegenc`는
+  검증된 적이 없으므로 Task 3·최종 검증에서 `tegrastats`로 CPU/전력/드롭을 반드시 확인하고, 동시
+  `nvjpegenc` 인스턴스 한계를 주시한다.
+- **`cv2`는 `apt python3-opencv`로 설치** — 시스템 numpy 1.21.5와 호환. pip `opencv-python`은 numpy
+  충돌 위험(선행 프로젝트가 겪어 venv를 분리했던 문제). 모니터에만 필요(핵심 촬영/녹화는 cv2 불필요).
+- **재사용 모듈은 이미 테스트됨** — 선행 `tests/test_controls.py`·`test_stats.py`가 `controls`/`stats`를
+  커버하므로 새 프로젝트에선 재테스트 불필요. 신규 단위 테스트는 `gst_builder`만.
+- **(선택) 장치 인덱스 런타임 확인** — `controls.detect_cameras()`로 `ar0234` 카드를 감지할 수 있다.
+  하드코딩 `[0,1,2,3]` 대신 런타임 감지를 쓰면 장치 순서 변동에 견고해진다.
+
 ## File Structure
 
 ```
