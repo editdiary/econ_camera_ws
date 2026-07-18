@@ -1,0 +1,5 @@
+target_type: 'aprilgrid'
+tagCols: 7          # 가로 태그 개수
+tagRows: 5          # 세로 태그 개수
+tagSize: 0.04       # 태그 한 변 [m] = 4cm
+tagSpacing: 0.25    # (태그 사이 간격 1cm) / (태그 4cm)
