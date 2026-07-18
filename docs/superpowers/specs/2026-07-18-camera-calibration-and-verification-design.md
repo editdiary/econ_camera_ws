@@ -85,8 +85,8 @@ docker build -t kalibr:arm64 -f Dockerfile_ros1_20_04 .
 어안 전용 모델 후보 중 **Double Sphere(`ds`)** 와 **eUCM(`eucm`)** 두 가지를 채택 후보로 둔다.
 
 - **추가 촬영 불필요**: 같은 녹화 데이터에 Kalibr를 모델만 바꿔 **offline 2회** 실행.
-  - `--models ds ds ds ds`
-  - `--models eucm eucm eucm eucm`
+  - `--models ds-none ds-none ds-none ds-none`
+  - `--models eucm-none eucm-none eucm-none eucm-none`
 - 두 리포트의 **재투영 오차 RMS·잔차 산포**를 비교해 더 나은 쪽을 채택.
 - 둘 다 만족스럽지 않으면 KB(equidistant, `pinhole-equi`)로 확장 검토(모델은 재계산으로 교체 가능).
 
@@ -116,13 +116,13 @@ tagSpacing: 0.25    # (태그 사이 간격 1cm) / (태그 4cm) = 0.25
 rosrun kalibr kalibr_calibrate_cameras \
   --bag /data/calib.bag \
   --target /data/aprilgrid.yaml \
-  --models ds ds ds ds \
+  --models ds-none ds-none ds-none ds-none \
   --topics /cam0/image_raw /cam1/image_raw /cam2/image_raw /cam3/image_raw \
   --approx-sync 0.001 \
   --dont-show-report
 
 # eUCM 비교 실행 (--models 만 교체)
-#   --models eucm eucm eucm eucm
+#   --models eucm-none eucm-none eucm-none eucm-none
 ```
 
 - **`--models`** 는 카메라 수(4)만큼 나열. DS/eUCM 리포트를 비교해 채택(§3.2).
@@ -148,21 +148,23 @@ rosrun kalibr kalibr_calibrate_cameras \
 
 ---
 
-## 5. 커버리지 즉시 체크 — (A) 현장 체크 스크립트 (신규)
+## 5. 커버리지/품질 체크 — Kalibr 검출 기반
 
-Kalibr는 **완전 offline 배치** 도구다: 녹화 중에는 피드백이 전혀 없고, 코너 검출 실패 프레임은
-그냥 버려지며, 촬영을 다 마친 뒤에야 커버리지 부족·검출 실패를 알게 된다("블라인드 녹화" 문제).
-이를 막기 위해 **녹화 직후 현장에서** 돌리는 경량 체크 스크립트를 둔다.
+Kalibr는 **완전 offline 배치** 도구다: 녹화 중에는 피드백이 없다. 촬영 품질(커버리지·검출)은
+**Kalibr 실행 결과로 판단**한다.
 
-- 입력: 방금 녹화한 캘리브 시퀀스의 추출 프레임(`bag_extract` 출력 재사용).
-- 동작: 각 프레임에 AprilGrid 검출기를 1회 돌려 다음을 출력.
-  1. **카메라별 검출 성공률** (검출된 프레임 / 전체 프레임)
-  2. **코너 커버리지 히트맵** — 검출된 코너가 이미지 평면 어디에 떨어졌는지(주변부가 비었는지 즉시 확인)
-- 판정: 기준 미달(예: 검출률 낮음 / 주변부 빈칸)이면 **그 자리에서 재촬영**.
-- 범위: 실시간 오버레이(monitor 노드 확장)는 이번 범위 밖. 필요성이 확인되면 추후 확장(옵션 B).
+**결정 이력(2026-07-18 실기):** 초기에는 별도 경량 게이트(`calib_coverage`, cv2.aruco AprilGrid
+검출 + 커버리지 히트맵)를 두려 했으나, **실기 어안 프레임에서 cv2.aruco도 pupil-apriltags도
+검출에 실패**함을 확인했다(어안 왜곡으로 태그 사각형이 휘고, 회색 배경 저대비, 태그 픽셀 과소).
+독립 검출기는 신뢰할 수 없어 **은퇴**시키고, **Kalibr 자체 검출을 권위 소스로 사용**한다.
 
-> 이 스크립트는 캘리브 품질을 "다 찍고 나서"가 아니라 "찍은 직후"에 보장하는 것이 목적이며,
-> Kalibr 실행 전에 나쁜 데이터를 거른다.
+- 커버리지/검출 판단 = Kalibr 실행 시 나오는 **카메라별 코너/태그 검출 수** + report PDF의
+  **관측 코너 분포(coverage) 플롯**. 검출 수가 적거나 주변부가 비면 → **재촬영**.
+- 촬영 품질 요건(§4)을 지키는 게 1차 방어선: 보드를 **화면의 큰 비중으로(가까이)**, 태그가
+  충분한 픽셀(권장 한 변 ≥ ~50–80px)로 보이게, 선명하게, 여러 포즈로.
+
+> 즉 "찍은 직후" 체크는 현장에서 Kalibr를 한 번 돌려 검출 수/커버리지 플롯을 확인하는 것으로
+> 갈음한다(Jetson+Docker가 현장에 있으므로 가능). 별도 cv2.aruco 게이트는 두지 않는다.
 
 ---
 

@@ -61,3 +61,10 @@ desktop.ini
 *.log
 .env
 .env.local
+
+# 캘리브/수집 데이터 산출물 (커밋 대상 아님)
+calib_output/
+rosbag2_*/
+*.bag
+extracted/
+dataset/

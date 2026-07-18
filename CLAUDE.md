@@ -12,7 +12,10 @@
 - `bag_extract.py`: bag(mcap) → 동기 세트별 JPEG(`frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`).
   기본 동기 허용오차 **1ms**(frame_sync 실측 sub-ms).
 - `record.launch.py`: `capture` + `ros2 bag record -s mcap`(카메라 4토픽만 명시 기록) 동시 기동.
-- 순수 로직 테스트 11개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
+- **캘리브레이션**(어안 4대 intrinsic + 카메라 간 extrinsic): Kalibr(arm64 Docker)로 실기 관통 검증 완료.
+  도구 = `calibration/`(빌드·실행 스크립트, `aprilgrid.yaml`) + `kalibr_bridge`(세트→Kalibr 데이터셋)
+  + `calib_convert`(camchain→`calib.yaml`). 절차·판정 기준·문제해결은 `docs/CALIBRATION.md`.
+- 순수 로직 테스트 18개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 
 ## 프로젝트
 e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드웨어 동기(`frame_sync`)가
@@ -54,6 +57,9 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 
 ## 상세 문서
 - **사용 가이드**: `docs/USAGE.md` (녹화·모니터·bag 추출·파라미터·문제해결)
+- **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)
+- 설계 스펙(캘리브·검증): `docs/superpowers/specs/2026-07-18-camera-calibration-and-verification-design.md`
+- 구현 계획(캘리브): `docs/superpowers/plans/2026-07-18-camera-calibration-and-verification.md`
 - 설계 스펙(카메라 수집): `docs/superpowers/specs/2026-07-16-econ-camera-ros2-capture-design.md`
 - 설계 스펙(수집 시스템 & bag 녹화 주의사항, Camera+LiDAR→BEV):
   `docs/superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md`

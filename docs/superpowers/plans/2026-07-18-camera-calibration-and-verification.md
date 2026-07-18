@@ -313,7 +313,13 @@ git commit -m "feat(calib): kalibr_bridge — extracted → Kalibr 데이터셋(
 
 ---
 
-### Task 3: `calib_coverage` — AprilGrid 검출률·커버리지 현장 체크
+### Task 3: `calib_coverage` — AprilGrid 검출률·커버리지 현장 체크 [RETIRED 2026-07-18]
+
+> **은퇴됨.** 구현·리뷰까지 마쳤으나(commit 1fd7e66), 실기 어안 프레임에서 cv2.aruco도
+> pupil-apriltags도 AprilGrid 검출에 실패함을 확인(어안 왜곡·저대비·태그 픽셀 과소). 독립
+> 검출기가 신뢰 불가여서 모듈·테스트·엔트리포인트를 제거하고, 커버리지/품질 판단은 **Kalibr
+> 자체 검출(카메라별 코너 수 + report 커버리지 플롯)** 로 대체했다(spec §5). 아래 원 계획은
+> 이력으로만 남긴다.
 
 순수 로직(그리드·검출률·주변부·판정)만 단위 테스트. cv2 AprilTag 검출은 `main`에서 수동 검증.
 
