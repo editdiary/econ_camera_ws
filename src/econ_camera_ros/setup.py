@@ -26,6 +26,8 @@ setup(
             'capture = econ_camera_ros.capture_node:main',
             'monitor = econ_camera_ros.web_monitor_node:main',
             'bag_extract = econ_camera_ros.bag_extract:main',
+            'kalibr_bridge = econ_camera_ros.kalibr_bridge:main',
+            'calib_convert = econ_camera_ros.calib_convert:main',
         ],
     },
 )
