@@ -1,6 +1,18 @@
 # CLAUDE.md
 
-이 저장소에서 작업할 때 참고할 핵심 사항. 상세 설계는 아래 spec을 참조.
+이 저장소에서 작업할 때 참고할 핵심 사항. 상세 설계는 아래 spec을, 사용법은 `docs/USAGE.md`를 참조.
+
+## 현재 상태 (2026-07-18)
+카메라 4대 연속 동기 수집은 **구현 완료**(실기 4대 수동 검증만 남음). 구성:
+- `capture`(`capture_node.py`): 단일 파이프라인 캡처 → `CompressedImage` 발행. **워밍업**
+  (`warmup_s` 기본 4s: 프레임 폐기로 4대 정상 확인 후 첫 클린 사이클부터 발행 → 시작 프레임 수 일치).
+  발행 병목 회피: `msg.data = array.array("B", data)` (bytes 대입 대비 2200배).
+- `monitor`(`web_monitor_node.py`): **브라우저 2×2 MJPEG**(stdlib http.server, 기본 포트 10010).
+  구독 전용·JPEG 패스스루라 **cv2 미사용**. 헤드리스/SSH 대응.
+- `bag_extract.py`: bag(mcap) → 동기 세트별 JPEG(`frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`).
+  기본 동기 허용오차 **1ms**(frame_sync 실측 sub-ms).
+- `record.launch.py`: `capture` + `ros2 bag record -s mcap`(카메라 4토픽만 명시 기록) 동시 기동.
+- 순수 로직 테스트 11개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 
 ## 프로젝트
 e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드웨어 동기(`frame_sync`)가
@@ -22,8 +34,8 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 
 ## 기술 결정 (확정)
 - **ROS2 = 호스트 네이티브 설치(Humble)**. Docker 미사용.
-- **캡처+인코딩 = GStreamer** (Python `gi` + `appsink`, HW `nvvidconv`/`nvjpegenc`). cv2는
-  모니터의 JPEG 디코드/표시에만 사용.
+- **캡처+인코딩 = GStreamer** (Python `gi` + `appsink`, HW `nvvidconv`/`nvjpegenc`). 모니터는
+  웹 MJPEG(JPEG 패스스루)라 cv2 미사용.
 - **다중 동기 = 단일 파이프라인(4개 v4l2src, 공유 클럭)**. valve/tee 없이 연속 스트림.
   타임스탬프 = appsink 버퍼 PTS. 카메라 간 stamp 직접 비교 가능.
 - **저장 = `sensor_msgs/CompressedImage`(JPEG)**, rosbag2 스토리지 **mcap**.
@@ -34,12 +46,15 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
   연속 수집 파이프라인 문자열은 기존 valve/tee 구조와 달라 **신규 작성**(`gst_builder.py`).
 - 순수 로직(파이프라인 문자열 빌더)은 하드웨어 없이 `pytest`/`colcon test`로 검증. 실제
   캡처·동기·녹화는 4대에서 수동 검증.
-- 파일은 관심사별로 작게 유지: `econ_camera_ros/{gst_builder,capture_node,monitor_node}.py`.
+- 파일은 관심사별로 작게 유지: `econ_camera_ros/{gst_builder,capture_node,web_monitor_node,bag_extract}.py`.
 
 ## Git 작업 방식
 - **새 기능 추가·테스트는 항상 새 브랜치**에서 진행한다.
 - **브랜치 병합·푸시는 사용자가 직접** 한다 — Claude는 새 브랜치 생성과 **커밋까지만** 수행.
 
 ## 상세 문서
-- 설계 스펙: `docs/superpowers/specs/2026-07-16-econ-camera-ros2-capture-design.md`
-- 구현 계획: `docs/superpowers/plans/` (작성 예정)
+- **사용 가이드**: `docs/USAGE.md` (녹화·모니터·bag 추출·파라미터·문제해결)
+- 설계 스펙(카메라 수집): `docs/superpowers/specs/2026-07-16-econ-camera-ros2-capture-design.md`
+- 설계 스펙(수집 시스템 & bag 녹화 주의사항, Camera+LiDAR→BEV):
+  `docs/superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md`
+- 구현 계획: `docs/superpowers/plans/2026-07-16-econ-camera-ros2-capture.md`
