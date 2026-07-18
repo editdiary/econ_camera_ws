@@ -170,6 +170,12 @@ Kalibr는 **완전 offline 배치** 도구다: 녹화 중에는 피드백이 전
 
 **원칙: 캘리브를 푼 데이터가 아니라 별도 held-out 시퀀스로 검증한다.**
 
+**구현 단계(phasing):** Kalibr는 재투영 RMS·잔차 플롯·**쌍별(pairwise) 재투영 오차**를 리포트로
+직접 출력하며, 이것이 실무 표준 검증 신호다. 따라서 **(A) 지금**은 Kalibr 내장 리포트 해석 +
+정성 육안(6.1-3)으로 검증하고, calib.yaml에 RMS를 기록한다. **(B) 나중**에 필요성이 확인되면
+독립 검증 도구(6.2의 루프 일관성·cross-projection)를 추가한다 — 이들은 Kalibr가 안 주는 루프
+닫기 재실행·프레임별 보드 자세 추출이 필요해 별도 작업이다(§9).
+
 ### 6.1 Intrinsic 검증 (카메라별)
 
 1. **재투영 오차** — Kalibr 리포트의 카메라별 RMS(어안이라도 sub-pixel 지향).
@@ -227,5 +233,6 @@ cam↔LiDAR extrinsic        # (나중) L2 도착 후 채움
 ## 9. 미해결/추후
 
 - 실시간 검출 오버레이(옵션 B) — 현장 체크(A)로 부족하면 monitor 노드 확장으로 추가.
+- 독립 검증 도구(§6.2 B) — 루프 일관성·cross-projection. Kalibr 리포트(A)로 부족하면 추가.
 - cam↔LiDAR extrinsic(C) — L2 도착 후 별도 설계. targetless/target 기반 방식 선택 포함.
 - 컨테이너 내 catkin workspace 경로 — clone한 Dockerfile에서 실제 값 확인(§3.1).
