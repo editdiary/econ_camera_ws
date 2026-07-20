@@ -66,6 +66,7 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 
 ## 상세 문서
 - **사용 가이드**: `docs/USAGE.md` (녹화·모니터·bag 추출·파라미터·문제해결)
+- **문제해결**: `docs/TROUBLESHOOTING.md` (실기 운영 중 겪은 문제 사례별 정리)
 - **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)
 - **매핑 가이드**: `docs/MAPPING.md` (오프라인 LIO 실행·산출물·시각화·판정)
 - 설계 스펙(매핑): `docs/superpowers/specs/2026-07-20-lio-mapping-integration-design.md`
