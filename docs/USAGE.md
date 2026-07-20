@@ -331,7 +331,7 @@ dataset/
 
 ```bash
 # 순수 로직 테스트 (ROS 소싱 불필요)
-cd src/econ_camera_ros && python3 -m pytest test/ -q      # 11 passed
+cd src/econ_camera_ros && python3 -m pytest test/ -q      # 18 passed
 ```
 
 - 파일은 관심사별로 작게: `gst_builder`(파이프라인 문자열) / `capture_node`(캡처·발행) /
@@ -341,12 +341,20 @@ cd src/econ_camera_ros && python3 -m pytest test/ -q      # 11 passed
 
 ---
 
-## 9. 향후: LiDAR 추가 → BEV
+## 9. LiDAR 함께 수집 (카메라 + LiDAR 통합 bag)
 
-Unitree 4D LiDAR L2(IMU 내장)를 같은 ws에 붙여 **단일 bag**으로 함께 수집하고 BEV 학습
-데이터로 가공할 예정이다. 확장은 구조상 **토픽 리스트 추가 + 통합 런치** 수준으로 끝난다
-(`/lidar/points`, `/lidar/imu`를 record 토픽에 추가).
+Unitree 4D LiDAR L2(IMU 내장)가 같은 ws에 통합되어 있다. 카메라 4대 + LiDAR 점군/IMU/TF를
+**단일 bag(mcap)** 으로 동시 녹화한다.
 
+```bash
+# 사전조건: 호스트 NIC 192.168.1.2/24, ping 192.168.1.62 OK
+ros2 launch econ_camera_ros record_all.launch.py
+```
+
+녹화 토픽(8): `/camera{0..3}/image_raw/compressed`, `/unilidar/cloud`, `/unilidar/imu`, `/tf`, `/tf_static`.
+`ros2 bag info <bag>`로 8토픽·메시지 수를 확인한다.
+
+- 연결·빌드·검증·문제해결 상세: [`LIDAR.md`](LIDAR.md)
 - 캘리브레이션(intrinsic/extrinsic)은 **정적 상수** → bag에 넣지 않고 `calib.yaml` 사이드카.
-- 동적 데이터(점군·IMU)는 **반드시 주행 중 bag에 기록** → ego-pose는 이걸로 사후 복원(LIO).
-- 상세: [`superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md`](superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md)
+- 동적 데이터(점군·IMU)는 **주행 중 bag에 기록** → ego-pose는 사후 복원(LIO).
+- 융합/BEV 설계: [`superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md`](superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md)

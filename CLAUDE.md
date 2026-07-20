@@ -12,6 +12,10 @@
 - `bag_extract.py`: bag(mcap) → 동기 세트별 JPEG(`frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`).
   기본 동기 허용오차 **1ms**(frame_sync 실측 sub-ms).
 - `record.launch.py`: `capture` + `ros2 bag record -s mcap`(카메라 4토픽만 명시 기록) 동시 기동.
+- `record_all.launch.py`: `capture` + **LiDAR**(`unitree_lidar_ros2`) + `ros2 bag record -s mcap`
+  (카메라4 + `/unilidar/cloud`·`/unilidar/imu` + `/tf`·`/tf_static`, 8토픽) 동시 기동.
+- **LiDAR**(Unitree 4D L2): `src/unitree_lidar_ros2`(벤더 패키지) + `third_party/unitree_lidar_sdk`
+  (prebuilt SDK). 이더넷 UDP(호스트 `192.168.1.2/24`). 절차·검증은 `docs/LIDAR.md`. 실기 검증만 남음.
 - **캘리브레이션**(어안 4대 intrinsic + 카메라 간 extrinsic): Kalibr(arm64 Docker)로 실기 관통 검증 완료.
   도구 = `calibration/`(빌드·실행 스크립트, `aprilgrid.yaml`) + `kalibr_bridge`(세트→Kalibr 데이터셋)
   + `calib_convert`(camchain→`calib.yaml`). 절차·판정 기준·문제해결은 `docs/CALIBRATION.md`.
@@ -21,7 +25,8 @@
 e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드웨어 동기(`frame_sync`)가
 맞춰진 상태로 끊김 없이 캡처하여 **ROS2 bag(mcap)** 으로 저장한다. 런치 하나로 촬영 시작 →
 `1280x720@30`(frame_sync=1) 4대 이미지를 `sensor_msgs/CompressedImage`(HW JPEG)로 계속 기록.
-수집 데이터는 이후 딥러닝 학습에 사용. 향후 LiDAR를 같은 ws에 추가 예정(본 범위 밖).
+수집 데이터는 이후 딥러닝 학습에 사용. LiDAR(Unitree L2, IMU 포함)도 같은 ws에 통합되어
+카메라와 단일 bag으로 함께 수집한다(자세히는 `docs/LIDAR.md`).
 
 - **선행 프로젝트**: `../Multi-Cam_module_test` (Flask 촬영·캘리브레이션 도구). 그 `econ_cam`
   패키지의 순수 로직(`controls`, `stats`)을 재사용한다.
