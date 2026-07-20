@@ -68,3 +68,12 @@ rosbag2_*/
 *.bag
 extracted/
 dataset/
+
+# ============================================================
+# LIO 매핑 런타임 산출물
+# ============================================================
+/out/
+mapping/preview/
+src/point_lio/PCD/*.pcd
+src/point_lio/Log/*.txt
+src/point_lio/image/
