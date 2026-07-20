@@ -358,3 +358,16 @@ ros2 launch econ_camera_ros record_all.launch.py
 - 캘리브레이션(intrinsic/extrinsic)은 **정적 상수** → bag에 넣지 않고 `calib.yaml` 사이드카.
 - 동적 데이터(점군·IMU)는 **주행 중 bag에 기록** → ego-pose는 사후 복원(LIO).
 - 융합/BEV 설계: [`superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md`](superpowers/specs/2026-07-18-data-collection-bag-and-fusion-design.md)
+
+---
+
+## 10. 오프라인 매핑 (bag → 궤적·맵)
+
+녹화된 bag에서 ego 궤적과 3D 맵을 복원한다(BEV 데이터 전제). 상세는 `docs/MAPPING.md`.
+
+```bash
+sudo apt install ros-humble-pcl-ros ros-humble-pcl-conversions   # 최초 1회
+colcon build --packages-select point_lio && source install/setup.bash
+./mapping/lio_map_bag.sh <bag_경로> out/run01
+```
+산출물: `out/run01/{map.pcd, trajectory.tum, run_info.txt, preview/}`.

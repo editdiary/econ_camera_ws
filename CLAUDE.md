@@ -16,6 +16,10 @@
   (카메라4 + `/unilidar/cloud`·`/unilidar/imu` + `/tf`·`/tf_static`, 8토픽) 동시 기동.
 - **LiDAR**(Unitree 4D L2): `src/unitree_lidar_ros2`(벤더 패키지) + `third_party/unitree_lidar_sdk`
   (prebuilt SDK). 이더넷 UDP(호스트 `192.168.1.2/24`). 절차·검증은 `docs/LIDAR.md`. 실기 검증만 남음.
+- **오프라인 매핑**(bag→궤적·맵): Point-LIO(ROS2) 벤더링 `src/point_lio` + `mapping/`
+  (`lio_map_bag.sh`·`pose_logger.py`·`pcd_preview.py`·`bev_grid.py`). `ros2 bag play` 기반
+  후처리라 **실시간 수집·녹화 코드와 완전 분리**. 산출물 = `map.pcd`+`trajectory.tum`(ego-pose,
+  BEV 전제)+미리보기. 절차는 `docs/MAPPING.md`.
 - **캘리브레이션**(어안 4대 intrinsic + 카메라 간 extrinsic): Kalibr(arm64 Docker)로 실기 관통 검증 완료.
   도구 = `calibration/`(빌드·실행 스크립트, `aprilgrid.yaml`) + `kalibr_bridge`(세트→Kalibr 데이터셋)
   + `calib_convert`(camchain→`calib.yaml`). 절차·판정 기준·문제해결은 `docs/CALIBRATION.md`.
@@ -63,6 +67,8 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 ## 상세 문서
 - **사용 가이드**: `docs/USAGE.md` (녹화·모니터·bag 추출·파라미터·문제해결)
 - **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)
+- **매핑 가이드**: `docs/MAPPING.md` (오프라인 LIO 실행·산출물·시각화·판정)
+- 설계 스펙(매핑): `docs/superpowers/specs/2026-07-20-lio-mapping-integration-design.md`
 - 설계 스펙(캘리브·검증): `docs/superpowers/specs/2026-07-18-camera-calibration-and-verification-design.md`
 - 구현 계획(캘리브): `docs/superpowers/plans/2026-07-18-camera-calibration-and-verification.md`
 - 설계 스펙(카메라 수집): `docs/superpowers/specs/2026-07-16-econ-camera-ros2-capture-design.md`
