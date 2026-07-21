@@ -1,12 +1,23 @@
 #!/bin/bash
 # lio_map_bag.sh — bag을 Point-LIO로 매핑해 {map.pcd, trajectory.tum, run_info, preview} 생성
-# 사용법: ./mapping/lio_map_bag.sh <bag_path> <out_dir> [--no-preview]
+# 사용법: ./mapping/lio_map_bag.sh <bag_path> <out_dir> [--no-preview] [--max-secs N]
+#   --max-secs N : bag 재생을 N초에서 중단(온전한 구간만 매핑). LIO 발산·낙하 등
+#                  오염 구간을 잘라낼 때 사용. 재생은 realtime이라 벽시계 N초 ≈ bag N초.
 set -uo pipefail
 
-BAG="${1:?사용법: $0 <bag_path> <out_dir> [--no-preview]}"
-OUT="${2:?사용법: $0 <bag_path> <out_dir> [--no-preview]}"
+BAG="${1:?사용법: $0 <bag_path> <out_dir> [--no-preview] [--max-secs N]}"
+OUT="${2:?사용법: $0 <bag_path> <out_dir> [--no-preview] [--max-secs N]}"
 PREVIEW=1
-[ "${3:-}" = "--no-preview" ] && PREVIEW=0
+MAX_SECS=0
+shift 2
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-preview) PREVIEW=0 ;;
+        --max-secs)   MAX_SECS="${2:?--max-secs 뒤에 초 값 필요}"; shift ;;
+        *) echo "[lio_map_bag] 알 수 없는 인자: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
 
 WS="$(cd "$(dirname "$0")/.." && pwd)"
 MAP_DIR="$WS/mapping"
@@ -34,9 +45,14 @@ NODE_PGID=$!
 
 sleep 6   # 노드 초기화 대기
 
-# 3) bag 재생 (블로킹)
-echo "[lio_map_bag] 재생 시작..."
-ros2 bag play "$BAG"
+# 3) bag 재생 (블로킹). --max-secs 지정 시 그 시점에서 중단.
+if [ "$MAX_SECS" -gt 0 ]; then
+    echo "[lio_map_bag] 재생 시작... (최대 ${MAX_SECS}s)"
+    timeout "$MAX_SECS" ros2 bag play "$BAG"
+else
+    echo "[lio_map_bag] 재생 시작..."
+    ros2 bag play "$BAG"
+fi
 echo "[lio_map_bag] 재생 종료"
 sleep 3
 
