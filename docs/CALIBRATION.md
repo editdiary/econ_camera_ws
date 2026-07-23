@@ -184,6 +184,9 @@ calib-camchain-eucm.yaml calib-results-cam-eucm.txt calib-report-cam-eucm.pdf
 있으면 그 방향으로 포즈가 부족**한 것(재촬영 신호). report PDF 의 **관측 코너 커버리지 플롯**으로
 이미지 어디가 비었는지 확인(어안은 주변부가 비기 쉽다).
 
+**이미지별 코너 수가 필요하면**(어떤 프레임이 검출 부족인지 콕 집으려면) `run_detect_report.sh` 로
+Kalibr 검출기 그대로 이미지별 코너 수 CSV(`detect_report.csv`)를 뽑는다(§8 의 DLT 크래시 참고).
+
 ### 5.2 재투영 오차 (핵심 품질 지표)
 
 `calib-results-cam-*.txt` 의 각 카메라 `reprojection error: [mean] +- [std]` 에서 **std(px)** 가
@@ -263,6 +266,8 @@ verification:
 | `build_kalibr_arm64.sh` | `calibration/` | Kalibr arm64 이미지 빌드(+vision 스택·cv2 선로딩) |
 | `Dockerfile.patch` | `calibration/` | 기존 이미지에 vision 스택·cv2 선로딩 얹는 패치 레이어 |
 | `run_kalibr.sh` | `calibration/` | bagcreater + ds-none/eucm-none 실행(실기 함정 자동 처리) |
+| `run_detect_report.sh` | `calibration/` | Kalibr 검출기로 이미지별 코너 수 리포트(+`<N`코너 프레임 자동 제외) |
+| `kalibr_detect_report.py` | `calibration/` | 위 래퍼가 컨테이너 안에서 실행하는 검출·필터 본체 |
 | `aprilgrid.yaml` | `calibration/` | 타깃 설정(7×5/0.04/0.25) |
 | `cam_layout` | `econ_camera_ros/` | orientation.json → 링 순서 토픽 정렬(run_kalibr·calib_convert 공유) |
 | `orientation.example.json` | `calibration/` | cam↔방향 매핑 템플릿(복사·편집) |
@@ -287,6 +292,7 @@ verification:
 | `initialization of cv_bridge_boost raised unreported exception` | cv2(OpenCV)가 cv_bridge 보다 먼저 로드돼야 함 | `.pth` 로 cv2 선로딩(패치 레이어에 반영됨) |
 | `--models ds` 인식 실패 | Kalibr 모델명은 **`ds-none`/`eucm-none`** | 헬퍼가 올바른 이름 사용 |
 | 검출 0 / 재투영 std 큼 | 보드가 작음/흐림/포즈 부족 | §1 요령으로 재촬영(보드 크게·다포즈·선명) |
+| `DLT algorithm needs at least 6 points ... 'count' is 5` (초기화 크래시) | 코너<6 인 '간당간당' 프레임이 intrinsic 초기화에 뽑힘(Kalibr 4.2 가드 없음) | `sudo bash calibration/run_detect_report.sh <DATA_DIR>` 로 그 프레임 제외 후 `run_kalibr.sh` 재실행. 뺀 프레임은 `dataset_rejected/` 로 이동(복구 가능) |
 | `docker` 권한 거부 | 계정이 docker 그룹 밖 | `sudo` 또는 `usermod -aG docker $USER` 후 재로그인 |
 | 산출물이 root 소유 | `sudo docker` 로 생성 | 필요 시 `sudo chown -R $USER:$USER <dir>` |
 
