@@ -10,6 +10,7 @@ log/
 # ============================================================
 *.mcap
 *.db3
+*.bag
 bags/
 rosbag2_*/
 
@@ -62,18 +63,19 @@ desktop.ini
 .env
 .env.local
 
-# 캘리브/수집 데이터 산출물 (커밋 대상 아님)
-calib_output/
-rosbag2_*/
-*.bag
-extracted/
-dataset/
-
 # ============================================================
 # LIO 매핑 런타임 산출물
 # ============================================================
 /out/
 mapping/preview/
+mapping/out/
+mapping/map_view.html
 src/point_lio/PCD/*.pcd
 src/point_lio/Log/*.txt
 src/point_lio/image/
+
+# 벤더 upstream 참고용 클론 (빌드엔 src/point_lio 사용)
+third_party/point_lio_unilidar/
+
+# 데이터·산출물 모음 (수집 bag·추출 이미지·캘리브/LIO 산출물 등 전부 이 아래)
+data/
