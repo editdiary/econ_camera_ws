@@ -27,6 +27,8 @@
 - **캘리브레이션**(어안 4대 intrinsic + 카메라 간 extrinsic): Kalibr(arm64 Docker)로 실기 관통 검증 완료.
   도구 = `calibration/`(빌드·실행 스크립트, `aprilgrid.yaml`) + `kalibr_bridge`(세트→Kalibr 데이터셋)
   + `calib_convert`(camchain→`calib.yaml`). 절차·판정 기준·문제해결은 `docs/CALIBRATION.md`.
+  `calib.yaml` **시각 검증**(언디스토션·360° 파노라마·카메라 간 겹침, 검출 불필요·호스트 파이썬)은
+  `calibration/verify/`(`docs/CALIBRATION.md §6.5`). calib 이미지·직접 수집 이미지 모두 적용.
 - 순수 로직 테스트 18개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
   한 곳으로 모은다. `third_party/point_lio_unilidar`(upstream 원본 클론)는 빌드에 안 쓰이며

@@ -260,6 +260,30 @@ verification:
 
 ---
 
+## 6.5 시각 검증 (`calib.yaml` 이 실제로 맞는지 눈으로)
+
+Kalibr 리포트의 재투영 수치(§5.2)를 넘어, **실제 장면이 잘 펴지고 4대가 잘 이어지는지**를
+본다. 검출 불필요(DS 투영/역투영만)라 호스트 파이썬만으로 돌고, calib 이미지든 직접 수집한
+일반 이미지든 동일하게 적용된다. 상세·판정 포인트는 `calibration/verify/README.md`.
+
+```bash
+# 언디스토션(RAW|핀홀|원통) — 세상 직선이 곧게 펴지나
+python3 calibration/verify/verify_undistort.py --images data/calib_260723/extracted --frames "800,1600"
+# 360° 파노라마 — intrinsic+extrinsic 동시(먼 구조물이 이음새 넘어 이어지나)
+python3 calibration/verify/verify_panorama.py  --images data/calib_260723/extracted --frames "800,1600"
+# 카메라 간 겹침(checkerboard/blend) — extrinsic
+python3 calibration/verify/verify_extrinsics.py --images data/calib_260723/extracted --frames "800,1600"
+# 직접 수집 이미지에 적용(최종 실증) — --out 로 분리 저장
+python3 calibration/verify/verify_undistort.py --images data/cam_out/raws1_out-images --out data/cam_out/verify/undistort
+```
+
+- **판정**: 핀홀에서 격자·창틀·기둥이 곧은 직선, 원통에서 수직선이 수직, 파노라마/겹침에서
+  **먼 구조물**이 이음새를 넘어 매끄럽게 이어지면 양호.
+- ⚠️ 파노라마/겹침은 회전-전용 근사라 **가까운 물체의 이음새 어긋남·유령현상은 정상**(시차).
+- 정량 재투영 오차는 여전히 Kalibr 리포트(§5.2)가 권위 소스(AprilGrid 는 호스트에서 검출 불가, §7).
+
+---
+
 ## 7. 도구 레퍼런스 (신규 캘리브 코드)
 
 | 도구 | 위치 | 역할 |
@@ -275,6 +299,7 @@ verification:
 | `kalibr_bridge` | `ros2 run econ_camera_ros` | 동기 세트 → Kalibr 데이터셋(4Hz 다운샘플) |
 | `calib_convert` | `ros2 run econ_camera_ros` | Kalibr camchain → `calib.yaml` |
 | `bag_extract` | `ros2 run econ_camera_ros` | bag → 동기 세트 JPEG(재사용) |
+| `verify/` (undistort·panorama·extrinsics) | `calibration/verify/` | `calib.yaml` 시각 검증(§6.5, 검출 불필요·호스트 파이썬) |
 
 > **커버리지 게이트 참고:** 초기엔 별도 cv2.aruco 기반 `calib_coverage` 를 뒀으나, 실기 어안
 > 프레임에서 cv2.aruco·pupil-apriltags 모두 검출 실패(촘촘한 AprilGrid 배열은 낱개 태그
