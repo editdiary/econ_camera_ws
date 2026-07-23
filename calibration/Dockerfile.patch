@@ -1,6 +1,5 @@
-# 기존 kalibr:arm64(ros-base 기반) 위에 Kalibr 가 필요로 하는 ROS vision 스택을 얹는다.
-# arm64 리베이스로 desktop-full 이 빠지면서 누락된 cv_bridge 등을 apt 로 보충.
-# 22분 풀 재빌드 없이 apt 레이어만 추가(빠름).
+# 기존 kalibr:arm64(ros-base 기반) 위에 (1) 누락 vision 스택 apt 보충, (2) cv2 선로딩 .pth,
+# (3) 어안 intrinsic 초기화 크래시 가드 패치를 얹는다. (3) 은 C++ 재컴파일이라 수 분 걸린다.
 #   sudo docker build --network=host -t kalibr:arm64 -f calibration/Dockerfile.patch calibration/
 FROM kalibr:arm64
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -10,3 +9,15 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
 # import cv2 를 import cv_bridge 보다 먼저 해야 함). .pth 는 인터프리터 시작 시 자동 실행되므로,
 # cv2 를 선로딩해 모든 kalibr 스크립트의 상단 import cv_bridge 가 동작하게 한다.
 RUN echo "import numpy, cv2" > /usr/lib/python3/dist-packages/zz_cv2_preload.pth
+# 어안 intrinsic 초기화 크래시 근본 수정.
+#   *Projection::estimateTransformation 은 코너를 광축 80° 콘으로 컬링한 뒤 cv::solvePnP 를
+#   호출하는데, 가드가 'Ps.size() < 4' 뿐이다. 그러나 solvePnP(DLT)는 최소 6점을 요구하므로
+#   생존 코너가 4~5개인 어안 주변부 프레임에서
+#     "DLT algorithm needs at least 6 points ... 'count' is 5/4"
+#   로 캘리브가 통째로 죽는다(ds/eucm/omni/pinhole 전부 동일 코드). 가드를 '< 6' 으로 올리면
+#   그런 관측은 solvePnP 로 안 가고 스킵(return false)돼 크래시가 사라진다.
+RUN cd /catkin_ws/src/kalibr && \
+    sed -ri 's/(if \(Ps\.size\(\) < )4(\))/\16\2/' \
+      aslam_cv/aslam_cameras/include/aslam/cameras/implementation/*Projection.hpp && \
+    grep -rl "Ps.size() < 6" aslam_cv/aslam_cameras/include/aslam/cameras/implementation/ && \
+    /bin/bash -c "source /opt/ros/noetic/setup.bash && cd /catkin_ws && catkin build"

@@ -184,8 +184,9 @@ calib-camchain-eucm.yaml calib-results-cam-eucm.txt calib-report-cam-eucm.pdf
 있으면 그 방향으로 포즈가 부족**한 것(재촬영 신호). report PDF 의 **관측 코너 커버리지 플롯**으로
 이미지 어디가 비었는지 확인(어안은 주변부가 비기 쉽다).
 
-**이미지별 코너 수가 필요하면**(어떤 프레임이 검출 부족인지 콕 집으려면) `run_detect_report.sh` 로
-Kalibr 검출기 그대로 이미지별 코너 수 CSV(`detect_report.csv`)를 뽑는다(§8 의 DLT 크래시 참고).
+**이미지별 코너 수가 필요하면**(어떤 프레임이 검출 부족인지 콕 집거나, 성긴 프레임을 걸러 품질을
+높이려면) `run_detect_report.sh` 로 Kalibr 검출기 그대로 이미지별 코너 수 CSV(`detect_report.csv`)를
+뽑는다. 단, intrinsic 초기화 크래시(§8 의 DLT)는 검출 수와 무관하므로 이 필터로는 못 고친다.
 
 ### 5.2 재투영 오차 (핵심 품질 지표)
 
@@ -292,7 +293,7 @@ verification:
 | `initialization of cv_bridge_boost raised unreported exception` | cv2(OpenCV)가 cv_bridge 보다 먼저 로드돼야 함 | `.pth` 로 cv2 선로딩(패치 레이어에 반영됨) |
 | `--models ds` 인식 실패 | Kalibr 모델명은 **`ds-none`/`eucm-none`** | 헬퍼가 올바른 이름 사용 |
 | 검출 0 / 재투영 std 큼 | 보드가 작음/흐림/포즈 부족 | §1 요령으로 재촬영(보드 크게·다포즈·선명) |
-| `DLT algorithm needs at least 6 points ... 'count' is 5` (초기화 크래시) | 코너<6 인 '간당간당' 프레임이 intrinsic 초기화에 뽑힘(Kalibr 4.2 가드 없음) | `sudo bash calibration/run_detect_report.sh <DATA_DIR>` 로 그 프레임 제외 후 `run_kalibr.sh` 재실행. 뺀 프레임은 `dataset_rejected/` 로 이동(복구 가능) |
+| `DLT algorithm needs at least 6 points ... 'count' is 5/4` (초기화 크래시) | Kalibr 버그: `*Projection::estimateTransformation` 이 코너를 광축 80° 콘으로 컬링한 뒤 `cv::solvePnP` 를 부르는데 가드가 `< 4` 뿐. 어안 주변부 프레임은 컬링 후 4~5점만 남아 통과 → DLT(≥6) 크래시(ds/eucm/omni/pinhole 전부 동일, 모델 교체·검출필터로 해결 불가). **검출 코너 수와 무관**(검출 40개도 컬링 후 4개 가능) | 가드를 `< 6` 으로 올린 뒤 이미지 재빌드 → `sudo docker build --network=host -t kalibr:arm64 -f calibration/Dockerfile.patch calibration/` (수 분, C++ 재컴파일). `Dockerfile.patch` 에 반영돼 있음 |
 | `docker` 권한 거부 | 계정이 docker 그룹 밖 | `sudo` 또는 `usermod -aG docker $USER` 후 재로그인 |
 | 산출물이 root 소유 | `sudo docker` 로 생성 | 필요 시 `sudo chown -R $USER:$USER <dir>` |
 
