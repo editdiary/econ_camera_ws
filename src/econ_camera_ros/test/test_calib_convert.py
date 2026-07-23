@@ -51,3 +51,33 @@ def test_camchain_to_calib_extrinsic_order_sensitive():
     out = cvt.camchain_to_calib(camchain, "ds")
     # 올바른 순서 T_cam2_cam0 = trans_x @ rot_z90 → [0][3]==1. 뒤집힌 순서면 [0][3]==0.
     assert out["extrinsics"]["T_cam2_cam0"] == [[0, -1, 0, 1], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+
+
+def test_camchain_to_calib_relabel_by_rostopic():
+    I = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+    t01 = [[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+    # 링 순서로 녹화된 camchain: Kalibr cam0=front 토픽(/cam2), cam1=right 토픽(/cam1).
+    camchain = {
+        "cam0": _cam("ds", [0.1, 0.6, 700, 700, 640, 360], "/cam2/image_raw"),
+        "cam1": _cam("ds", [0.1, 0.6, 701, 701, 641, 361], "/cam1/image_raw", t01),
+    }
+    topic_to_dir = {"/cam2/image_raw": "front", "/cam1/image_raw": "right"}
+    out = cvt.camchain_to_calib(camchain, "ds", None, topic_to_dir)
+    assert set(out["cameras"]) == {"front", "right"}
+    assert out["extrinsics"]["T_front_front"] == I    # 기준 = cams[0]=cam0=front
+    assert out["extrinsics"]["T_right_front"] == t01
+
+
+def test_camchain_to_calib_labels_by_rostopic_not_position():
+    # 순서와 방향이 어긋난 camchain: Kalibr cam0 의 rostopic 이 /cam1(right), cam1 이 /cam2(front).
+    # 위치 기반이면 cam0→front 로 잘못 라벨하지만, rostopic 기반이면 cam0→right 로 올바르게 라벨.
+    t01 = [[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+    camchain = {
+        "cam0": _cam("ds", [0.1, 0.6, 700, 700, 640, 360], "/cam1/image_raw"),
+        "cam1": _cam("ds", [0.1, 0.6, 701, 701, 641, 361], "/cam2/image_raw", t01),
+    }
+    topic_to_dir = {"/cam1/image_raw": "right", "/cam2/image_raw": "front"}
+    out = cvt.camchain_to_calib(camchain, "ds", None, topic_to_dir)
+    assert set(out["cameras"]) == {"right", "front"}
+    assert "T_right_right" in out["extrinsics"]   # 기준 = cams[0]=cam0=right
+    assert "T_front_right" in out["extrinsics"]

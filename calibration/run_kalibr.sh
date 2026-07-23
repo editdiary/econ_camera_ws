@@ -13,7 +13,18 @@ set -euo pipefail
 
 DATA_DIR="$(realpath "${1:?usage: run_kalibr.sh <DATA_DIR>}")"
 WS="/catkin_ws"   # 컨테이너 내 catkin workspace (빌드 로그로 확인됨)
-TOPICS="/cam0/image_raw /cam1/image_raw /cam2/image_raw /cam3/image_raw"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LAYOUT="$SCRIPT_DIR/../src/econ_camera_ros/econ_camera_ros/cam_layout.py"
+
+# orientation.json 이 있으면 링 순서(front-right-rear-left)로 토픽 정렬(포트 재연결로 cam
+# 번호가 바뀌어도 인접 카메라가 --topics 순서상 연속되게). 없으면 기존 cam0~3 순서.
+if [ -f "$DATA_DIR/orientation.json" ]; then
+  TOPICS="$(python3 "$LAYOUT" "$DATA_DIR/orientation.json" --topics)"
+  echo "orientation.json 적용 → Kalibr 토픽 순서: $TOPICS"
+else
+  TOPICS="/cam0/image_raw /cam1/image_raw /cam2/image_raw /cam3/image_raw"
+  echo "orientation.json 없음 → 기본 순서 cam0~3 사용"
+fi
 
 # 사전 검증: 입력이 없으면 컨테이너 안에서 불투명하게 실패하므로 미리 거른다.
 [ -d "$DATA_DIR/dataset" ]        || { echo "ERROR: $DATA_DIR/dataset 없음 (kalibr_bridge 먼저 실행)"; exit 1; }
@@ -45,3 +56,7 @@ docker run --rm --network=host -e KALIBR_MANUAL_FOCAL_LENGTH_INIT=1 \
   done
 "
 echo "DONE: /data 에 ds/eucm camchain·results·report 생성."
+if [ -f "$DATA_DIR/orientation.json" ]; then
+  echo "── Kalibr cam 인덱스 ↔ 방향 (results.txt 대조 / calib_convert --rms 입력용) ──"
+  python3 "$LAYOUT" "$DATA_DIR/orientation.json" --map | sed 's/^/  /'
+fi

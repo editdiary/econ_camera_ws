@@ -23,12 +23,14 @@ ros2 launch econ_camera_ros record.launch.py          # 찍고 Ctrl-C
 ros2 run econ_camera_ros bag_extract <bag_dir> -o extracted
 ros2 run econ_camera_ros kalibr_bridge extracted -o dataset --rate 4.0
 cp calibration/aprilgrid.yaml .
+cp calibration/orientation.example.json orientation.json   # 커버 테스트로 확인한 방향으로 편집
 sudo bash calibration/run_kalibr.sh "$(pwd)"           # ds-none·eucm-none 둘 다
 
 # 5) 리포트 비교 → 6) calib.yaml
 cat calib-results-cam-ds.txt calib-results-cam-eucm.txt
 ros2 run econ_camera_ros calib_convert calib-camchain-ds.yaml \
-  --model ds -o calib.yaml --rms cam0=.. cam1=.. cam2=.. cam3=..
+  --model ds -o calib.yaml --orientation orientation.json \
+  --rms front=.. right=.. rear=.. left=..
 ```
 
 ---
@@ -121,6 +123,28 @@ cp calibration/aprilgrid.yaml .        # dataset/ 과 같은 폴더에 둔다
 → `dataset/cam{0..3}/<나노초>.png`. 30fps 세트를 **~4Hz로 다운샘플**(중복·블러 프레임 제거로
 최적화 안정화). 한 세트의 4대는 같은 타임스탬프를 파일명으로 공유한다.
 
+### 3.1 카메라 방향 매핑 (`orientation.json`) — 포트 재연결 대비
+
+포트 연결에 따라 cam 번호(`/dev/video0~3`)가 바뀔 수 있다. 360° 어안 4대는 **인접(90°)만
+겹치고 반대편은 안 겹치므로**, Kalibr `--topics` 순서상 연속된 카메라가 물리적으로 인접해야
+extrinsic 이 풀린다. 이를 매 촬영마다 신경 쓰지 않도록 **방향 매핑 파일**을 둔다.
+
+```bash
+cp calibration/orientation.example.json orientation.json   # dataset/ 옆에 두고 편집
+```
+
+**어느 cam이 어느 방향인지 확인:** `monitor`(2×2 화면)를 켜고 카메라를 하나씩 손으로 가려,
+어두워지는 칸의 cam 번호를 그 방향에 적는다.
+
+```json
+{"cam0": "left", "cam1": "right", "cam2": "front", "cam3": "rear"}
+```
+
+- 값은 정확히 `front/right/rear/left` 각 1개씩. `run_kalibr.sh`가 이 파일을 읽어 링 순서
+  `front→right→rear→left`로 토픽을 정렬한다. **파일이 없으면 기존 cam0~3 순서로 폴백**.
+- 실행 끝에 `Kalibr cam{i} = 방향 (/camN/image_raw)` 매핑 표가 출력된다 → `results.txt`(Kalibr는
+  cam0~3 라벨)를 방향과 대조하고, `calib_convert --rms` 입력에 사용.
+
 ---
 
 ## 4. Kalibr 실행 (ds-none·eucm-none 둘 다 자동)
@@ -137,6 +161,9 @@ sudo bash calibration/run_kalibr.sh "$(pwd)"      # 모델당 10~15분 (Jetson)
 calib-camchain-ds.yaml   calib-results-cam-ds.txt   calib-report-cam-ds.pdf
 calib-camchain-eucm.yaml calib-results-cam-eucm.txt calib-report-cam-eucm.pdf
 ```
+
+> `orientation.json`을 두면 링 순서로 자동 정렬되고, 실행 끝에 **Kalibr cam↔방향 매핑 표**가
+> 출력된다. `results.txt`의 `cam0~3`은 이 표 기준(링 순서: front·right·rear·left)임에 유의.
 
 **Kalibr 파이프라인이 오래 걸리는 이유:** 1136장(284×4) 서브픽셀 코너 추출 → 카메라 intrinsic +
 카메라 간 extrinsic + **모든 뷰의 보드 6DoF 자세**를 한꺼번에 푸는 배치 번들 조정 → 뷰를
@@ -200,8 +227,8 @@ calib-camchain-eucm.yaml calib-results-cam-eucm.txt calib-report-cam-eucm.pdf
 
 ```bash
 ros2 run econ_camera_ros calib_convert calib-camchain-ds.yaml \
-  --model ds -o calib.yaml \
-  --rms cam0=6.0 cam1=1.6 cam2=3.0 cam3=3.0
+  --model ds -o calib.yaml --orientation orientation.json \
+  --rms front=3.0 right=1.6 rear=3.0 left=6.0     # 매핑 표 보고 방향별로(예: §5.4 실측을 방향으로 환산)
 ```
 
 **`calib.yaml` 구조:**
@@ -223,6 +250,10 @@ verification:
   왜곡이 투영모델에 내장돼 `distortion_coeffs` 는 빈 리스트.
 - 데이터셋 옆에 `calib.yaml` 을 둔다. cam↔LiDAR extrinsic 은 L2 도착 후 이 파일에 추가.
 
+> `--orientation`을 주면 `cameras`·`extrinsics` 키가 `cam0~3` 대신 **방향명**(front/right/rear/
+> left)이 되고 기준은 `front`(`T_right_front` 등)다. 카메라 번호가 바뀌어도 결과 해석이
+> 안 흔들린다. 생략하면 기존 `camN` 라벨 그대로.
+
 ---
 
 ## 7. 도구 레퍼런스 (신규 캘리브 코드)
@@ -233,6 +264,8 @@ verification:
 | `Dockerfile.patch` | `calibration/` | 기존 이미지에 vision 스택·cv2 선로딩 얹는 패치 레이어 |
 | `run_kalibr.sh` | `calibration/` | bagcreater + ds-none/eucm-none 실행(실기 함정 자동 처리) |
 | `aprilgrid.yaml` | `calibration/` | 타깃 설정(7×5/0.04/0.25) |
+| `cam_layout` | `econ_camera_ros/` | orientation.json → 링 순서 토픽 정렬(run_kalibr·calib_convert 공유) |
+| `orientation.example.json` | `calibration/` | cam↔방향 매핑 템플릿(복사·편집) |
 | `kalibr_bridge` | `ros2 run econ_camera_ros` | 동기 세트 → Kalibr 데이터셋(4Hz 다운샘플) |
 | `calib_convert` | `ros2 run econ_camera_ros` | Kalibr camchain → `calib.yaml` |
 | `bag_extract` | `ros2 run econ_camera_ros` | bag → 동기 세트 JPEG(재사용) |
