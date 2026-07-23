@@ -8,6 +8,7 @@
 - `mapping/lio_map_bag.sh` — bag → 산출물 오케스트레이터.
 - `mapping/pose_logger.py` — `/aft_mapped_to_init` → `trajectory.tum`.
 - `mapping/pcd_preview.py`, `mapping/bev_grid.py` — 헤드리스 PNG 시각화(numpy).
+- `mapping/check_lidar_bag.py` — 매핑 전 `/unilidar/cloud` 사전점검(프레임수·rate·빈프레임) + BEV PNG.
 
 ## 2. 선결 조건 (최초 1회)
 ```bash
@@ -21,9 +22,10 @@ source install/setup.bash
 ## 3. 실행
 ```bash
 ./mapping/lio_map_bag.sh <bag_경로> <출력_폴더>
-# 예: ./mapping/lio_map_bag.sh rosbag2_2026_07_20-19_49_12 out/run01
+# 예: ./mapping/lio_map_bag.sh rosbag2_2026_07_20-19_49_12 data/ds_mapping_out
 ```
 - `--no-preview` : 미리보기 PNG 생략.
+- `--max-secs N` : bag 재생을 N초에서 중단(LIO 발산/오염 구간 제외). realtime 재생이라 벽시계≈bag 시간.
 - 소요: bag 재생 시간 + 초기화 ~10초.
 
 ## 4. 산출물 (`<출력_폴더>/`)
@@ -40,6 +42,9 @@ source install/setup.bash
   (`ros2 launch point_lio mapping_unilidar_l2.launch.py rviz:=true` 실시간).
 
 ## 6. 판정 / 주의
+- **매핑 전 사전점검**: `python3 mapping/check_lidar_bag.py <bag_경로>` 로 `/unilidar/cloud`가
+  제대로 찍혔는지(프레임수·rate·빈프레임) 먼저 확인하고 BEV PNG로 실제 구조를 눈으로 본다
+  (setup.bash source 필요). 여기서 이상하면 LIO를 돌려도 맵이 안 나온다.
 - **정지 vs 이동**: 정지 촬영이면 맵에 동심원 링·과밀이 나타난다(정상). 실제 BEV 데이터용
   맵은 **공간을 이동하며** 녹화해야 궤적이 생긴다. 초기 몇 초는 정지(IMU 초기화).
 - `trajectory.tum` 라인 수가 0이면 pose 미복원 → bag의 `/unilidar/imu`·`/unilidar/cloud` 확인.

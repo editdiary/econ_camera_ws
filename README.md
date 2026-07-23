@@ -7,7 +7,7 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 워크스페이스**.
 이미지가 `sensor_msgs/CompressedImage`(HW JPEG)로 계속 기록된다. 수집 데이터는 이후 딥러닝
 학습(BEV)에 사용한다.
 
-> **상태: 카메라 수집 + 어안 캘리브레이션(Kalibr) 실기 관통 검증 완료.**
+> **상태: 데이터 수집 완료. 캘리브레이션은 지금부터 진행**(도구·절차는 Kalibr 실기 관통 검증 완료).
 > **바로 쓰려면 → 수집은 [`docs/USAGE.md`](docs/USAGE.md), 캘리브는 [`docs/CALIBRATION.md`](docs/CALIBRATION.md).**
 
 ## 요구 환경
@@ -29,15 +29,20 @@ econ_camera_ws/
       bag_extract.py            # bag(mcap) → 동기 세트별 JPEG 추출
       kalibr_bridge.py          # 동기 세트 → Kalibr 데이터셋(4Hz 다운샘플)
       calib_convert.py          # Kalibr camchain → calib.yaml 사이드카
-    launch/record.launch.py     # capture 노드 + ros2 bag record 동시 기동
+    launch/                     # record(카메라) / record_all(카메라+LiDAR) / record_lidar(LiDAR만)
     test/                       # 순수 로직 pytest (18 passed, 하드웨어 불필요)
   calibration/                  # Kalibr(arm64 Docker) 캘리브레이션 도구
     build_kalibr_arm64.sh       # Kalibr arm64 이미지 빌드(1회)
     run_kalibr.sh               # bagcreater + ds-none/eucm-none 실행
     aprilgrid.yaml              # 타깃 설정(7×5/0.04/0.25)
+  mapping/                      # 오프라인 LIO(bag→궤적·맵) 도구 + check_lidar_bag.py 사전점검
+  tools/check_recording.py      # 녹화 bag 프레임 간격 기반 QC 판정
+  third_party/                  # 벤더 SDK/소스 (colcon 스캔 제외)
+  data/                         # 수집 bag·추출 이미지·산출물 (gitignore)
   docs/
     USAGE.md                    # ★ 상세 사용 가이드 (녹화·모니터·추출)
     CALIBRATION.md              # ★ 캘리브레이션 가이드 (촬영·Kalibr·calib.yaml)
+    LIDAR.md                    # LiDAR 연결·녹화·검증   MAPPING.md  # 오프라인 매핑
     superpowers/specs/          # 설계 스펙
 ```
 

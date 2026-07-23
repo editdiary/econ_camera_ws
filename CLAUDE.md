@@ -2,7 +2,7 @@
 
 이 저장소에서 작업할 때 참고할 핵심 사항. 상세 설계는 아래 spec을, 사용법은 `docs/USAGE.md`를 참조.
 
-## 현재 상태 (2026-07-18)
+## 현재 상태 (2026-07-23)
 카메라 4대 연속 동기 수집은 **구현 완료**(실기 4대 수동 검증만 남음). 구성:
 - `capture`(`capture_node.py`): 단일 파이프라인 캡처 → `CompressedImage` 발행. **워밍업**
   (`warmup_s` 기본 4s: 프레임 폐기로 4대 정상 확인 후 첫 클린 사이클부터 발행 → 시작 프레임 수 일치).
@@ -11,19 +11,26 @@
   구독 전용·JPEG 패스스루라 **cv2 미사용**. 헤드리스/SSH 대응.
 - `bag_extract.py`: bag(mcap) → 동기 세트별 JPEG(`frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`).
   기본 동기 허용오차 **1ms**(frame_sync 실측 sub-ms).
+- `tools/check_recording.py`: 녹화 bag의 **프레임 타임스탬프 간격**으로 FPS·끊김·4대 정렬
+  판정(ROS 불필요, `pip install mcap`). 녹화 성공 판정은 모니터 화면이 아니라 이 도구로 한다.
 - `record.launch.py`: `capture` + `ros2 bag record -s mcap`(카메라 4토픽만 명시 기록) 동시 기동.
 - `record_all.launch.py`: `capture` + **LiDAR**(`unitree_lidar_ros2`) + `ros2 bag record -s mcap`
   (카메라4 + `/unilidar/cloud`·`/unilidar/imu` + `/tf`·`/tf_static`, 8토픽) 동시 기동.
+- `record_lidar.launch.py`: 카메라 없이 **LiDAR만** 녹화(`/unilidar/*`+`/tf`·`/tf_static`, 4토픽).
 - **LiDAR**(Unitree 4D L2): `src/unitree_lidar_ros2`(벤더 패키지) + `third_party/unitree_lidar_sdk`
   (prebuilt SDK). 이더넷 UDP(호스트 `192.168.1.2/24`). 절차·검증은 `docs/LIDAR.md`. 실기 검증만 남음.
 - **오프라인 매핑**(bag→궤적·맵): Point-LIO(ROS2) 벤더링 `src/point_lio` + `mapping/`
-  (`lio_map_bag.sh`·`pose_logger.py`·`pcd_preview.py`·`bev_grid.py`). `ros2 bag play` 기반
+  (`lio_map_bag.sh`(`--max-secs`로 재생 구간 제한)·`pose_logger.py`·`pcd_preview.py`·`bev_grid.py`·
+  `check_lidar_bag.py`(매핑 전 `/unilidar/cloud` 사전점검+BEV PNG)). `ros2 bag play` 기반
   후처리라 **실시간 수집·녹화 코드와 완전 분리**. 산출물 = `map.pcd`+`trajectory.tum`(ego-pose,
   BEV 전제)+미리보기. 절차는 `docs/MAPPING.md`.
 - **캘리브레이션**(어안 4대 intrinsic + 카메라 간 extrinsic): Kalibr(arm64 Docker)로 실기 관통 검증 완료.
   도구 = `calibration/`(빌드·실행 스크립트, `aprilgrid.yaml`) + `kalibr_bridge`(세트→Kalibr 데이터셋)
   + `calib_convert`(camchain→`calib.yaml`). 절차·판정 기준·문제해결은 `docs/CALIBRATION.md`.
 - 순수 로직 테스트 18개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
+- **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
+  한 곳으로 모은다. `third_party/point_lio_unilidar`(upstream 원본 클론)는 빌드에 안 쓰이며
+  (매핑은 `src/point_lio` 사용) gitignore 처리됨.
 
 ## 프로젝트
 e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드웨어 동기(`frame_sync`)가

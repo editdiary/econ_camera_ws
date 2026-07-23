@@ -201,7 +201,7 @@ calib-camchain-eucm.yaml calib-results-cam-eucm.txt calib-report-cam-eucm.pdf
 ```bash
 ros2 run econ_camera_ros calib_convert calib-camchain-ds.yaml \
   --model ds -o calib.yaml \
-  --rms cam0=1.6 cam1=1.6 cam2=3.0 cam3=3.0
+  --rms cam0=6.0 cam1=1.6 cam2=3.0 cam3=3.0
 ```
 
 **`calib.yaml` 구조:**
