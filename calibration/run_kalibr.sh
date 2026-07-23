@@ -34,28 +34,39 @@ rm -f "$DATA_DIR/calib.bag"
 
 docker run --rm --network=host -e KALIBR_MANUAL_FOCAL_LENGTH_INIT=1 \
   -v "$DATA_DIR:/data" --entrypoint bash kalibr:arm64 -c "
-  set -e   # 컨테이너 내부에서도 실패 시 즉시 중단(부분 실패 후 DONE 오인 방지)
+  set -e   # bagcreater·setup 등 준비 단계 실패는 즉시 중단(단, 모델 캘리브 실패는 아래서 개별 처리)
   source $WS/devel/setup.bash
   rosrun kalibr kalibr_bagcreater --folder /data/dataset --output-bag /data/calib.bag
 
   # Kalibr 모델명은 ds-none / eucm-none (도움말의 유효 목록). LABEL 은 파일 접미사용 축약.
+  OK_MODELS=\"\"; FAIL_MODELS=\"\"
   for M in ds-none eucm-none; do
     LABEL=\${M%-none}
-    rosrun kalibr kalibr_calibrate_cameras \
-      --bag /data/calib.bag \
-      --target /data/aprilgrid.yaml \
-      --models \$M \$M \$M \$M \
-      --topics $TOPICS \
-      --approx-sync 0.001 \
-      --dont-show-report
-    # 모델별 산출물이 덮이지 않게 접미사 부여. base 파일명만 정확히 지정
+    echo \"── [\$LABEL] 캘리브 시작 ──\"
+    # 한 모델이 실패해도(예: eucm 발산 → nan → 리포트 IndexError) 스크립트를 멈추지 않고
+    # 나머지 모델과 마무리 출력을 살리도록 if 로 감싼다(set -e 우회).
+    if rosrun kalibr kalibr_calibrate_cameras \
+        --bag /data/calib.bag \
+        --target /data/aprilgrid.yaml \
+        --models \$M \$M \$M \$M \
+        --topics $TOPICS \
+        --approx-sync 0.001 \
+        --dont-show-report; then
+      OK_MODELS=\"\$OK_MODELS \$LABEL\"
+    else
+      FAIL_MODELS=\"\$FAIL_MODELS \$LABEL\"
+      echo \"── [\$LABEL] 실패(무시하고 계속). 다른 모델 결과는 유지됨 ──\" >&2
+    fi
+    # 성공/실패 무관하게 생성된 산출물에 모델 접미사 부여. base 파일명만 정확히 지정
     # (와일드카드로 하면 앞 모델의 이미 접미사 붙은 파일까지 다시 잡혀 이중 접미사가 됨).
+    # 접미사로 옮겨 두면 실패한 nan 결과가 bare calib-camchain.yaml 로 남아 혼동되는 것도 막는다.
     for base in calib-camchain.yaml calib-results-cam.txt calib-report-cam.pdf; do
       [ -e \"/data/\$base\" ] && mv \"/data/\$base\" \"/data/\${base%.*}-\$LABEL.\${base##*.}\"
     done
   done
+  echo \"── 모델 요약 — 성공:\${OK_MODELS:- 없음} / 실패:\${FAIL_MODELS:- 없음} ──\"
 "
-echo "DONE: /data 에 ds/eucm camchain·results·report 생성."
+echo "DONE: 성공한 모델의 /data/*-<label>.yaml 사용(예: calib-camchain-ds.yaml)."
 if [ -f "$DATA_DIR/orientation.json" ]; then
   echo "── Kalibr cam 인덱스 ↔ 방향 (results.txt 대조 / calib_convert --rms 입력용) ──"
   python3 "$LAYOUT" "$DATA_DIR/orientation.json" --map | sed 's/^/  /'
