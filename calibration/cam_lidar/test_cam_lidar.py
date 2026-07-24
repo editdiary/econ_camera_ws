@@ -209,3 +209,42 @@ def test_accumulate_static_windows_by_time():
          (5_000_000_000, np.array([[9, 9, 9, 1]], float))]   # +5.0s (창 밖)
     out = accumulate_static(c, ref_ns=0, window_s=2.0)
     assert out.shape[0] == 2
+
+
+# ---- TUM 궤적 로드·보간·모션보정 누적 ----
+
+from cloud_io import load_tum, pose_at, accumulate_motion
+
+
+def test_load_tum_roundtrip(tmp_path):
+    f = tmp_path / "t.tum"
+    f.write_text("0.0 0 0 0 0 0 0 1\n1.0 1 0 0 0 0 0 1\n")
+    times, poses = load_tum(str(f))
+    assert times.tolist() == [0, 1_000_000_000]
+    assert np.allclose(poses[1][:3, 3], [1, 0, 0])
+
+
+def test_pose_at_interpolates_translation():
+    times = np.array([0, 2_000_000_000], np.int64)
+    poses = [np.eye(4), se3_from_rpy_xyz(0, 0, 0, 2, 0, 0)]
+    T = pose_at(times, poses, 1_000_000_000)   # 중간
+    assert np.allclose(T[:3, 3], [1, 0, 0], atol=1e-9)
+
+
+def test_pose_at_clamps_ends():
+    times = np.array([0, 1_000_000_000], np.int64)
+    poses = [np.eye(4), se3_from_rpy_xyz(0, 0, 0, 1, 0, 0)]
+    assert np.allclose(pose_at(times, poses, -5)[:3, 3], [0, 0, 0])
+    assert np.allclose(pose_at(times, poses, 9_000_000_000)[:3, 3], [1, 0, 0])
+
+
+def test_accumulate_motion_compensates():
+    # 라이다가 +x로 1m 이동. 세상 같은 점(원점)을 두 시각에 관측 → 각 프레임의 로컬 좌표는 다름.
+    times = np.array([0, 1_000_000_000], np.int64)
+    poses = [np.eye(4), se3_from_rpy_xyz(0, 0, 0, 1, 0, 0)]
+    # t0: 세상원점이 로컬(0,0,0); t1: 라이다가 +x1 이동 → 로컬(-1,0,0)
+    clouds = [(0, np.array([[0.0, 0, 0, 1]])), (1_000_000_000, np.array([[-1.0, 0, 0, 1]]))]
+    out = accumulate_motion(clouds, times, poses, at_ns=0, window_s=2.0)
+    # 기준=t0 라이다 프레임 → 둘 다 (0,0,0) 근처로 정렬돼야
+    assert out.shape[0] == 2
+    assert np.allclose(out[:, :3], 0.0, atol=1e-9)

@@ -5,6 +5,9 @@ PointCloud2 파싱은 mapping/check_lidar_bag.py 패턴을 따른다.
 from __future__ import annotations
 
 import numpy as np
+from scipy.spatial.transform import Rotation, Slerp
+
+from chain import se3, se3_inv, transform
 
 CLOUD_TOPIC = "/unilidar/cloud"
 
@@ -65,3 +68,52 @@ def read_clouds(bag_path, topic=CLOUD_TOPIC):
             continue
         out.append((stamp, cloud_to_xyzi(deserialize_message(data, PointCloud2))))
     return out
+
+
+def load_tum(path):
+    """TUM(t tx ty tz qx qy qz qw, t=초) → (times_ns int64(T,), poses list[4x4])."""
+    times, poses = [], []
+    for line in open(path):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        t, x, y, z, qx, qy, qz, qw = (float(v) for v in line.split()[:8])
+        T = np.eye(4)
+        T[:3, :3] = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
+        T[:3, 3] = [x, y, z]
+        times.append(int(round(t * 1e9)))
+        poses.append(T)
+    return np.array(times, np.int64), poses
+
+
+def pose_at(times_ns, poses, t_ns):
+    """브래킷 선형보간(위치)+slerp(회전). 범위 밖은 끝값 클램프."""
+    if t_ns <= times_ns[0]:
+        return poses[0].copy()
+    if t_ns >= times_ns[-1]:
+        return poses[-1].copy()
+    j = int(np.searchsorted(times_ns, t_ns))
+    t0, t1 = times_ns[j - 1], times_ns[j]
+    a = (t_ns - t0) / (t1 - t0)
+    rots = Rotation.from_matrix([poses[j - 1][:3, :3], poses[j][:3, :3]])
+    R = Slerp([0.0, 1.0], rots)([a]).as_matrix()[0]
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = (1 - a) * poses[j - 1][:3, 3] + a * poses[j][:3, 3]
+    return T
+
+
+def accumulate_motion(clouds, times_ns, poses, at_ns, window_s=2.0):
+    """각 프레임을 세상→기준(at) 라이다 프레임으로 정렬 후 병합. clouds=[(stamp_ns, xyzi)]."""
+    if not clouds:
+        return np.empty((0, 4))
+    T_ref_inv = se3_inv(pose_at(times_ns, poses, at_ns))
+    w = int(window_s * 1e9)
+    out = []
+    for s, xyzi in clouds:
+        if abs(s - at_ns) > w or len(xyzi) == 0:
+            continue
+        T = T_ref_inv @ pose_at(times_ns, poses, s)   # lidar@s → lidar@ref
+        P = transform(T, xyzi[:, :3])
+        out.append(np.hstack([P, xyzi[:, 3:4]]))
+    return np.vstack(out) if out else np.empty((0, 4))
