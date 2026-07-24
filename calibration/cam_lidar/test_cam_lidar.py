@@ -5,6 +5,12 @@
 import numpy as np
 
 from chain import se3, se3_inv, se3_to_rvec_tvec, se3_from_rpy_xyz, transform
+from chain import project, residuals, solve
+
+# ds_model 재사용(형제 디렉터리 verify/)
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "verify"))
+from ds_model import DoubleSphereCamera, CameraRig
 
 
 def test_se3_identity_roundtrip():
@@ -36,3 +42,71 @@ def test_se3_from_rpy_90deg_z():
     T = se3_from_rpy_xyz(0, 0, 90, 0, 0, 0)
     out = transform(T, np.array([[1.0, 0.0, 0.0]]))
     assert np.allclose(out[0], [0, 1, 0], atol=1e-9)
+
+
+def _toy_rig():
+    """front·right 2대 합성 리그(파일 불필요)."""
+    front = DoubleSphereCamera(xi=-0.19, alpha=0.606, fx=295.0, fy=295.0,
+                               cx=640.0, cy=360.0, width=1280, height=720, name="front")
+    right = DoubleSphereCamera(xi=-0.20, alpha=0.604, fx=293.0, fy=293.0,
+                               cx=635.0, cy=350.0, width=1280, height=720, name="right")
+    # right 는 front 대비 -90도 yaw (앞→오른쪽). front→cam 변환.
+    T_front_front = np.eye(4)
+    T_right_front = se3_from_rpy_xyz(0, -90, 0, 0.0, 0.0, 0.0)
+    return CameraRig({"front": front, "right": right},
+                     {"front": T_front_front, "right": T_right_front},
+                     {0: "front", 1: "right"})
+
+
+def _make_corrs(rig, T_true, n_per_cam=8):
+    """알려진 T_front_lidar로 라이다 점→픽셀 합성 대응점 생성."""
+    rng = np.random.default_rng(0)
+    corrs = []
+    for name in ("front", "right"):
+        cam = rig.cams_by_name[name]
+        # 카메라 정면(+z, cam 프레임)에 점 배치 → front 프레임 → lidar 프레임으로 역변환
+        for _ in range(n_per_cam):
+            z = rng.uniform(1.0, 8.0)
+            x = rng.uniform(-0.6, 0.6) * z
+            y = rng.uniform(-0.4, 0.4) * z
+            P_cam = np.array([x, y, z])
+            u, v, ok = cam.project(P_cam)
+            if not ok:
+                continue
+            P_front = transform(se3_inv(rig.T_cam_front[name]), P_cam)
+            P_lidar = transform(se3_inv(T_true), P_front)
+            corrs.append({"cam": name, "uv": [float(u), float(v)],
+                          "xyz": [float(P_lidar[0]), float(P_lidar[1]), float(P_lidar[2])]})
+    return corrs
+
+
+def test_project_matches_ds_directly():
+    rig = _toy_rig()
+    cam = rig.cams_by_name["front"]
+    P_cam = np.array([0.1, -0.2, 3.0])
+    u0, v0, ok0 = cam.project(P_cam)
+    # T_front_lidar = 항등, T_cam_front(front)=항등 → project 는 ds 와 동일해야
+    u, v, ok = project(P_cam, np.eye(4), np.eye(4), cam)
+    assert ok == ok0 and np.allclose([u, v], [u0, v0])
+
+
+def test_solve_recovers_known_extrinsic():
+    rig = _toy_rig()
+    # 라이다가 카메라 대비 z-up(≈ +90도 pitch) + 오프셋: 큰 회전
+    T_true = se3_from_rpy_xyz(-90, 0, 0, 0.05, -0.03, 0.10)
+    corrs = _make_corrs(rig, T_true)
+    assert len(corrs) >= 12
+    # 초기값: 진값에 15도/5cm 섭동(대략 장착값이 알려진 실사용 상황 모사)
+    perturb = se3_from_rpy_xyz(15, -10, 8, 0.03, 0.03, -0.03)
+    init_T = perturb @ T_true
+    T_est, rms, per = solve(corrs, rig, init_T)
+    assert rms < 1e-3
+    assert np.allclose(T_est, T_true, atol=1e-4)
+
+
+def test_residuals_length():
+    rig = _toy_rig()
+    T_true = se3_from_rpy_xyz(-90, 0, 0, 0, 0, 0)
+    corrs = _make_corrs(rig, T_true)
+    r = residuals(np.zeros(6), corrs, rig)
+    assert r.shape == (2 * len(corrs),)
