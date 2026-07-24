@@ -119,8 +119,12 @@ def load_rig(calib_path, orientation_path) -> CameraRig:
 
     extr = {}
     for key, mat in calib["extrinsics"].items():
-        # key = "T_<name>_front"
+        # 카메라 extrinsic 키만(T_<cam>_front). T_front_lidar 등 비-카메라 키는 무시.
+        if not (key.startswith("T_") and key.endswith("_front")):
+            continue
         name = key[len("T_"):-len("_front")]
+        if name not in cams:
+            continue
         extr[name] = np.array(mat, dtype=np.float64)
 
     idx_to_name = {int(k.replace("cam", "")): v for k, v in orient.items()}

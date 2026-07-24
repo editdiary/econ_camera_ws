@@ -10,7 +10,7 @@ from chain import project, residuals, solve
 # ds_model 재사용(형제 디렉터리 verify/)
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "verify"))
-from ds_model import DoubleSphereCamera, CameraRig
+from ds_model import DoubleSphereCamera, CameraRig, load_rig
 
 
 def test_se3_identity_roundtrip():
@@ -110,3 +110,58 @@ def test_residuals_length():
     corrs = _make_corrs(rig, T_true)
     r = residuals(np.zeros(6), corrs, rig)
     assert r.shape == (2 * len(corrs),)
+
+
+# ---- T_front_lidar 로더/쓰기 테스트 ----
+import yaml
+from calib_io import load_T_front_lidar, write_extrinsic
+
+# load_rig 이미 가져왔으므로 여기서 재사용. 위 sys.path 설정으로 ds_model 접근 가능.
+
+_MIN_CALIB = {
+    "model_chosen": "ds",
+    "cameras": {
+        "front": {"camera_model": "ds", "intrinsics": [-0.19, 0.606, 295.0, 295.0, 640.0, 360.0],
+                  "distortion_model": "none", "distortion_coeffs": [], "resolution": [1280, 720]},
+        "right": {"camera_model": "ds", "intrinsics": [-0.20, 0.604, 293.0, 293.0, 635.0, 350.0],
+                  "distortion_model": "none", "distortion_coeffs": [], "resolution": [1280, 720]},
+    },
+    "extrinsics": {
+        "T_front_front": np.eye(4).tolist(),
+        "T_right_front": se3_from_rpy_xyz(0, -90, 0, 0, 0, 0).tolist(),
+    },
+    "verification": {"reproj_rms_px": {}},
+}
+_ORIENT = {"cam0": "front", "cam1": "right"}
+
+
+def _write(tmp_path, calib=_MIN_CALIB, orient=_ORIENT):
+    cp = tmp_path / "calib.yaml"
+    op = tmp_path / "orientation.json"
+    cp.write_text(yaml.safe_dump(calib))
+    op.write_text(__import__("json").dumps(orient))
+    return cp, op
+
+
+def test_load_rig_ignores_lidar_extrinsic(tmp_path):
+    calib = {**_MIN_CALIB, "extrinsics": {**_MIN_CALIB["extrinsics"],
+             "T_front_lidar": se3_from_rpy_xyz(-90, 0, 0, 0.05, 0, 0.1).tolist()}}
+    cp, op = _write(tmp_path, calib)
+    rig = load_rig(str(cp), str(op))
+    # front extrinsic 은 여전히 항등(라이다 키에 덮이지 않음)
+    assert np.allclose(rig.T_cam_front["front"], np.eye(4))
+    assert set(rig.cams_by_name) == {"front", "right"}
+    assert "lidar" not in rig.T_cam_front and "front_lidar" not in rig.T_cam_front
+
+
+def test_write_then_load_T_front_lidar(tmp_path):
+    cp, _ = _write(tmp_path)
+    assert load_T_front_lidar(str(cp)) is None
+    T = se3_from_rpy_xyz(-90, 0, 0, 0.05, -0.03, 0.1)
+    write_extrinsic(str(cp), T, {"method": "manual-pnp-ds", "reproj_rms_px": 0.8, "stage": 1})
+    back = load_T_front_lidar(str(cp))
+    assert back is not None and np.allclose(back, T, atol=1e-12)
+    doc = yaml.safe_load(cp.read_text())
+    assert doc["verification"]["cam_lidar"]["method"] == "manual-pnp-ds"
+    # 기존 카메라 검증 블록 보존
+    assert "reproj_rms_px" in doc["verification"]
