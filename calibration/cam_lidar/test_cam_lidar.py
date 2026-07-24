@@ -6,6 +6,7 @@ import numpy as np
 
 from chain import se3, se3_inv, se3_to_rvec_tvec, se3_from_rpy_xyz, transform
 from chain import project, residuals, solve
+from cloud_io import cloud_to_xyzi, voxel_downsample, accumulate_static
 
 # ds_model 재사용(형제 디렉터리 verify/)
 import sys, pathlib
@@ -165,3 +166,46 @@ def test_write_then_load_T_front_lidar(tmp_path):
     assert doc["verification"]["cam_lidar"]["method"] == "manual-pnp-ds"
     # 기존 카메라 검증 블록 보존
     assert "reproj_rms_px" in doc["verification"]
+
+
+# ---- PointCloud2 파싱·voxel·누적 테스트 ----
+
+class _Field:
+    def __init__(self, name, offset):
+        self.name, self.offset = name, offset
+
+
+class _FakeMsg:
+    """PointCloud2 유사(x,y,z,intensity float32, point_step=16)."""
+    def __init__(self, xyzi):
+        self.fields = [_Field("x", 0), _Field("y", 4), _Field("z", 8), _Field("intensity", 12)]
+        self.point_step = 16
+        self.width, self.height = len(xyzi), 1
+        self.data = np.asarray(xyzi, np.float32).tobytes()
+
+
+def test_cloud_to_xyzi_parses_fields():
+    pts = np.array([[1, 2, 3, 0.5], [4, 5, 6, 0.9]], np.float32)
+    out = cloud_to_xyzi(_FakeMsg(pts))
+    assert out.shape == (2, 4)
+    assert np.allclose(out, pts, atol=1e-6)
+
+
+def test_cloud_to_xyzi_drops_nonfinite():
+    pts = np.array([[1, 2, 3, 0.5], [np.nan, 0, 0, 0.1]], np.float32)
+    out = cloud_to_xyzi(_FakeMsg(pts))
+    assert out.shape == (1, 4)
+
+
+def test_voxel_downsample_reduces():
+    xyzi = np.array([[0.01, 0, 0, 1], [0.02, 0, 0, 1], [5, 5, 5, 1]], float)
+    out = voxel_downsample(xyzi, voxel=0.1)
+    assert out.shape[0] == 2  # 앞 두 점은 같은 셀
+
+
+def test_accumulate_static_windows_by_time():
+    c = [(0, np.array([[0, 0, 0, 1]], float)),
+         (1_000_000_000, np.array([[1, 1, 1, 1]], float)),   # +1.0s
+         (5_000_000_000, np.array([[9, 9, 9, 1]], float))]   # +5.0s (창 밖)
+    out = accumulate_static(c, ref_ns=0, window_s=2.0)
+    assert out.shape[0] == 2
