@@ -29,6 +29,10 @@
   + `calib_convert`(camchain→`calib.yaml`). 절차·판정 기준·문제해결은 `docs/CALIBRATION.md`.
   `calib.yaml` **시각 검증**(언디스토션·360° 파노라마·카메라 간 겹침, 검출 불필요·호스트 파이썬)은
   `calibration/verify/`(`docs/CALIBRATION.md §6.5`). calib 이미지·직접 수집 이미지 모두 적용.
+- **Cam-LiDAR extrinsic**(`T_front_lidar`, 라이다→front): 도구 구현 완료(`calibration/cam_lidar/`,
+  수동 2D-3D 대응점 클릭 + DS-PnP). 카메라 간 extrinsic 체인에 라이다를 한 단으로 붙인다.
+  절차·판정 기준은 `docs/CAM_LIDAR_CALIBRATION.md`. 순수 로직 테스트 통과, 실기(정지 촬영·
+  대응점 클릭·solve RMS·오버레이 검증)만 남음.
 - 순수 로직 테스트 18개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
   한 곳으로 모은다. `third_party/point_lio_unilidar`(upstream 원본 클론)는 빌드에 안 쓰이며
@@ -77,6 +81,7 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 - **사용 가이드**: `docs/USAGE.md` (녹화·모니터·bag 추출·파라미터·문제해결)
 - **문제해결**: `docs/TROUBLESHOOTING.md` (실기 운영 중 겪은 문제 사례별 정리)
 - **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)
+- **Cam-LiDAR 캘리브 가이드**: `docs/CAM_LIDAR_CALIBRATION.md` (T_front_lidar, 수동 2D-3D 대응+DS-PnP, 정지 1단계·모션보정 2단계)
 - **매핑 가이드**: `docs/MAPPING.md` (오프라인 LIO 실행·산출물·시각화·판정)
 - 설계 스펙(매핑): `docs/superpowers/specs/2026-07-20-lio-mapping-integration-design.md`
 - 설계 스펙(캘리브·검증): `docs/superpowers/specs/2026-07-18-camera-calibration-and-verification-design.md`

@@ -6,7 +6,7 @@ Kalibr로 구하고 `calib.yaml` 사이드카로 남기는 실전 절차. 실기
 
 - 설계 근거: [`superpowers/specs/2026-07-18-camera-calibration-and-verification-design.md`](superpowers/specs/2026-07-18-camera-calibration-and-verification-design.md)
 - 구현 계획: [`superpowers/plans/2026-07-18-camera-calibration-and-verification.md`](superpowers/plans/2026-07-18-camera-calibration-and-verification.md)
-- cam↔LiDAR extrinsic 은 L2 도착 후(본 문서 범위 밖).
+- cam↔LiDAR extrinsic(`T_front_lidar`)은 별도 문서: [`CAM_LIDAR_CALIBRATION.md`](CAM_LIDAR_CALIBRATION.md).
 
 ---
 
