@@ -91,6 +91,27 @@ python3 generate.py \
 `--z-gate`(obstacle 바닥근접 여유)만 실질적 레버다. 0.6은 통로 위 캐노피 오검(비추), 0.15는 통로 개방, 0.3 절충(기본).
 `min_pts`·`min_extent`는 이 환경에선 무효. BEV 범위·해상도(XF/XR/YH/RES)는 `bev_label.BevSpec` 기본값 고정.
 
+### A.6 단계3 — 이미지 마스크 IPM 투영 + LiDAR 융합 검수 (선택; 더 정확한 라벨용)
+`generate.py`로 만든 **데이터셋(sample) 위에서** 동작한다(`ipm_review.py`). 사람이 각 sample 의
+`cam_{front,left,right}.jpg`에 그린 drivable 마스크를 **바닥 평면(z=−H)** 에 역투영(IPM)해 BEV로 올리고,
+그 sample 의 `meta.json`(stamp·z_gate·calib)으로 **LiDAR 라벨을 재구성**해 겹쳐 본다.
+- **왜 H(카메라 바닥 위 높이)가 필요**: 마스트 LiDAR는 바닥을 못 봐 H를 못 준다 → **자로 실측**(예: 렌즈 0.87m). `--cam-height`.
+- **마스크 레이아웃**(데이터셋 sample 구조 미러링): `<mask-dir>/sample_NNNNNN/cam_{front,left,right}.png`(흰=drivable).
+  마스크 있는 sample 만 처리(부분 라벨 OK). calib·orient·z_gate 는 sample `meta.json` 에서 자동으로 읽음(플래그로 덮어쓰기 가능).
+```bash
+cd calibration/bev_autolabel
+python3 ipm_review.py \
+  --dataset-dir ../../data/bev/dataset/raws1 \
+  --map-dir     ../../data/sj_bags/260722/maps/raws1_mapping \
+  --mask-dir    ../../data/bev/annotations/raws1 \
+  --cam-height  0.87        # --near 2.0(하늘 후보 승격 반경), --out(미지정 시 각 sample 폴더에 기록)
+```
+→ 각 `sample_NNNNNN/` 안에 추가: `review_combined.png`(상단 3이미지+하단 LiDAR/IPM/융합 3-패널; 격자·범례 포함),
+`label_fused.png`(**장식 없는 80×80 다색 카테고리 맵** — 겹침/불일치를 색으로 구분, **label tool에 바로 로드**; 색 의미는 review_combined 범례),
+`meta_review.json`(카테고리 셀 수). (LiDAR-only 0/1/2 는 generate 산출 `label.png` 그대로 사용.)
+- **검수뷰 색**: 밝은초록=둘 다 drivable / 빨강=LiDAR 장애물 / **주황=이미지바닥∩LiDAR장애물(→obstacle 채택, "잎 밑 바닥" 함정)** / 하늘=이미지 후보바닥(근거리 승격·원거리 ignore) / 어두운초록=LiDAR만 drivable / 회색=미확정.
+- **한계**: IPM은 평면 가정이라 원거리·측면 부정확·수직물체 번짐, LiDAR는 국소 drift 가능 — **둘 다 100% 아님 → 사람이 최종 판단**. 일치 셀은 자동 확정, 불일치만 검수.
+
 ---
 
 ## 1. 태스크 정의

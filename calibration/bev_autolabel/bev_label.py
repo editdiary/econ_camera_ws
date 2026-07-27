@@ -195,8 +195,12 @@ def assemble_label(observed, obs_rc, corridor, spec):
 
 def build_label(p, times_ns, poses, tpos, self_voxels, cams, T_cam_front,
                 T_front_lidar, t_ns, spec, use_names=("front", "left", "right"),
-                near=6.0, vox=0.15, win_s=20.0, z_gate=0.3):
-    """한 키프레임 라벨(0/1/2). p=월드 클라우드(N,3), tpos=pose 위치(T,3)."""
+                near=6.0, vox=0.15, win_s=20.0, z_gate=0.3, return_parts=False):
+    """한 키프레임 라벨(0/1/2). p=월드 클라우드(N,3), tpos=pose 위치(T,3).
+
+    return_parts=True 면 (label, parts) 반환. parts=중간 마스크 dict
+    (obs_rc·corridor·observed·label·T_bw 등) — IPM 검수 도구 등에서 재사용.
+    """
     T_wb = pose_at(times_ns, poses, t_ns)
     T_bw = se3_inv(T_wb)
     ctr = T_wb[:3, 3]
@@ -217,7 +221,12 @@ def build_label(p, times_ns, poses, tpos, self_voxels, cams, T_cam_front,
                   use_names=use_names)
     visible = raycast_visible(obs_rc, spec)
     observed = fov & visible
-    return assemble_label(observed, obs_rc, corridor, spec)
+    label = assemble_label(observed, obs_rc, corridor, spec)
+    if return_parts:
+        return label, {"floor": floor, "obstacle": obstacle, "corridor": corridor,
+                       "obs_rc": obs_rc, "fov": fov, "visible": visible,
+                       "observed": observed, "T_bw": T_bw, "T_wb": T_wb}
+    return label
 
 
 def select_keyframes(stamps, times_ns, poses, kf_step=0.4):
