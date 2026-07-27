@@ -137,3 +137,57 @@ def raycast_visible(obstacle, spec, step_deg=0.5):
             if obstacle[r, c]:
                 break
     return vis
+
+
+def compute_self_voxels(p, poses, radius=0.28, vox=0.15, z_abs=1.5,
+                        n_samples=150, persist=0.6, near_r=1.7):
+    """body 좌표에서 반경<radius·|z|<z_abs 로 >persist pose 지속 복셀 = 카트(self)."""
+    from collections import Counter
+    from scipy.spatial import cKDTree
+    tree = cKDTree(p[:, :2])
+    cnt = Counter()
+    n = min(n_samples, len(poses))
+    samp = np.linspace(0, len(poses) - 1, n).astype(int)
+    for i in samp:
+        Tbw = se3_inv(poses[i])
+        idx = tree.query_ball_point(poses[i][:3, 3][:2], r=near_r)
+        if not idx:
+            continue
+        Pb = transform(Tbw, p[idx, :3])
+        b = (np.hypot(Pb[:, 0], Pb[:, 1]) < radius) & (np.abs(Pb[:, 2]) < z_abs)
+        for k in set(_key3(np.floor(Pb[b, :3] / vox).astype(int)).tolist()):
+            cnt[k] += 1
+    return np.array([k for k, c in cnt.items() if c / len(samp) > persist], np.int64)
+
+
+def corridor_mask(tpos_ego, spec, r_traj=0.45, r_ego=0.3, x_min=-0.2):
+    """전방(x>=x_min) 궤적점 원 + ego 원을 drivable prior로."""
+    corr = np.zeros((spec.NX, spec.NY), np.uint8)
+    for x, y in np.asarray(tpos_ego)[:, :2]:
+        if x < x_min:
+            continue
+        r, c = rc_of(x, y, spec)
+        if 0 <= int(r) < spec.NX and 0 <= int(c) < spec.NY:
+            cv2.circle(corr, (int(c), int(r)), max(1, int(r_traj / spec.RES)), 1, -1)
+    cv2.circle(corr, (spec.C_EGO, spec.R_EGO), int(r_ego / spec.RES), 1, -1)
+    return corr.astype(bool)
+
+
+def keep_ego_connected(drivable, spec):
+    """ego셀과 연결된 drivable 성분만 남김."""
+    num, lbl = cv2.connectedComponents(drivable.astype(np.uint8))
+    ego = lbl[spec.R_EGO, spec.C_EGO]
+    if ego == 0:
+        return np.zeros_like(drivable, bool)
+    return lbl == ego
+
+
+def assemble_label(observed, obs_rc, corridor, spec):
+    """0=obstacle,1=drivable,2=ignore 조립 + ego 연결 drivable 정리."""
+    label = np.full((spec.NX, spec.NY), 2, np.uint8)
+    label[observed & ~obs_rc] = 1
+    label[observed & obs_rc] = 0
+    label[corridor & observed] = 1
+    driv = keep_ego_connected(label == 1, spec)
+    label[(label == 1) & ~driv] = 2
+    return label

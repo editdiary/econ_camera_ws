@@ -121,3 +121,58 @@ def test_raycast_blocks_behind_wall():
     r_far, c_far = rc_of(2.0, 0.0, s)     # 벽 뒤: 가려짐
     assert vis[int(r_near), int(c_near)]
     assert not vis[int(r_far), int(c_far)]
+
+
+from bev_label import compute_self_voxels, corridor_mask, keep_ego_connected, assemble_label
+
+
+def test_self_voxels_catches_close_not_far():
+    # 모든 pose에서 body 원점 근처(0.1m)에 카트 점, 0.7m 옆에 기둥 점.
+    # pose는 x축으로 전진(회전 없음).
+    poses = []
+    for i in range(20):
+        T = np.eye(4); T[0, 3] = i * 0.3
+        poses.append(T)
+    cart = np.array([[i * 0.3 + 0.1, 0.0, 0.0] for i in range(20)])   # body +0.1m 지속
+    pillar = np.array([[i * 0.3, 0.7, 0.0] for i in range(20)])       # body +0.7m 지속
+    p = np.vstack([cart, pillar])
+    SELF = compute_self_voxels(p, poses, radius=0.28)
+    # 카트(0.1m)는 SELF, 기둥(0.7m)은 반경 밖이라 아님
+    from bev_label import _key3
+    cart_key = _key3(np.floor(np.array([[0.1, 0.0, 0.0]]) / 0.15).astype(int))[0]
+    pillar_key = _key3(np.floor(np.array([[0.0, 0.7, 0.0]]) / 0.15).astype(int))[0]
+    assert cart_key in set(SELF.tolist())
+    assert pillar_key not in set(SELF.tolist())
+
+
+def test_corridor_forward_only():
+    s = BevSpec()
+    TE = np.array([[1.0, 0.0, 0.0], [-0.5, 0.0, 0.0]])   # 전방 1m, 후방 0.5m
+    corr = corridor_mask(TE, s)
+    r_f, c_f = rc_of(1.0, 0.0, s)
+    r_b, c_b = rc_of(-0.5, 0.0, s)
+    assert corr[int(r_f), int(c_f)]        # 전방 마킹
+    assert not corr[int(r_b), int(c_b)]    # 후방 미마킹(단, ego 원과 안 겹치는 위치)
+
+
+def test_keep_ego_connected_drops_island():
+    s = BevSpec()
+    d = np.zeros((s.NX, s.NY), bool)
+    d[s.R_EGO, s.C_EGO] = True
+    d[s.R_EGO - 1, s.C_EGO] = True         # ego 연결
+    d[0, 0] = True                         # 떨어진 섬
+    out = keep_ego_connected(d, s)
+    assert out[s.R_EGO, s.C_EGO] and not out[0, 0]
+
+
+def test_assemble_label_values():
+    s = BevSpec()
+    observed = np.zeros((s.NX, s.NY), bool)
+    observed[s.R_EGO - 5:s.R_EGO + 1, s.C_EGO] = True   # ego~전방 한 줄 관측
+    obs_rc = np.zeros((s.NX, s.NY), bool)
+    obs_rc[s.R_EGO - 5, s.C_EGO] = True                 # 관측 줄 끝에 장애물
+    corridor = np.zeros((s.NX, s.NY), bool)
+    lab = assemble_label(observed, obs_rc, corridor, s)
+    assert lab[s.R_EGO - 5, s.C_EGO] == 0               # obstacle
+    assert lab[s.R_EGO - 1, s.C_EGO] == 1               # drivable
+    assert lab[0, 0] == 2                               # 미관측 ignore
