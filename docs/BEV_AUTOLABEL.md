@@ -3,7 +3,10 @@
 > **이 문서의 목적**: 4대 어안 이미지로 **BEV 주행가능(occupancy) 맵**을 추론하는 모델(BEVFormer류)의
 > **학습 정답(auto-label)** 을, 현장에서 수집한 ROS bag + 그 bag의 LIO 맵으로부터 자동 생성하는
 > 파이프라인을 상세히 기록한다. 새 세션에서 바로 이어받아 작업할 수 있도록 규격·단계·특이사항을 모두 적는다.
-> PoC로 실데이터 검증 완료(2026-07-24). 참조 구현은 문서 맨 끝 부록(§10).
+> PoC로 실데이터 검증 완료(2026-07-24). **CLI 구현·다중 bag 검증 완료(2026-07-27)** →
+> 실행법·PoC 대비 변경사항은 아래 **§A(실행 가이드)**, 상세 설계·근거는
+> `docs/superpowers/specs/2026-07-27-bev-autolabel-quality-improvement-design.md`. §1~§10은 개념·PoC 서술이며,
+> 최종 구현은 §A의 변경사항 표를 따른다(수치가 다르면 §A·스펙이 최신).
 
 ---
 
@@ -16,6 +19,77 @@
 - **핵심 아이디어**: LiDAR는 **바닥을 못 보고 장애물(수직 구조)만 잘 본다**. 그래서
   **"장애물 footprint = obstacle, 그 외 보이는 곳 = drivable, 가려진 곳 = ignore"** 로 정의한다.
 - **사람 검수**: auto-label은 초안이다. 이후 사람이 BEV 위에서 검수·보정해 최종 데이터셋을 만든다.
+
+---
+
+## A. 실행 가이드 (CLI) & 구현 상태 — **먼저 읽기**
+
+### A.0 구현 상태 (2026-07-27)
+- 파이프라인 CLI 구현 완료: **`calibration/bev_autolabel/`**
+  - `bev_label.py`(순수 라벨 로직), `bev_io.py`(맵·stamp·이미지 IO), `render.py`(색칠·미터축 검수뷰),
+    `verify_labels.py`(**단계1** 검증 CLI), `generate.py`(**단계2** 데이터셋 CLI), `test_bev_label.py`(21 테스트).
+  - 재사용: `calibration/cam_lidar/{chain,cloud_io,calib_io}.py`, `calibration/verify/ds_model.py`.
+- 검증: raws3 16프레임 + 타 bag 4종(raws1/raws2/rawos2/rawos4, with/without-sun) 일관 확인. 순수 로직 테스트 21+18+7 pass.
+
+### A.1 PoC(§6) 대비 최종 변경사항 — **§6·§8보다 이 표가 최신**
+| 항목 | PoC 서술(§6) | 최종 구현 |
+|---|---|---|
+| obstacle 판정 | 고정 낮은밴드 `[floor+0.1, 1.0]` | **수직성 테스트**: 셀의 `z_min ≤ floor_cell+z_gate`(기본 0.3) **AND** `z_max−z_min ≥ 0.5m` |
+| floor | 전역 z 2퍼센타일 | **국소 격자**(~1m 윈도별 2퍼센타일, 빈 윈도 전역 백필) |
+| observed(보이는 곳) | 360° ray-cast 단독 | **카메라 FoV(front/left/right 지면점 투영) ∩ ray-cast 가림** |
+| ego self 반경 | <0.65 m | **<0.28 m**(40×40cm 반대각; 옆 기둥 보존) |
+| corridor(주행 궤적) | 전방만, observed 게이트 | **무조건 drivable**(ground-truth) — 마스트-아래 ego 지면점이 카메라 FoV 가장자리라 observed가 ego에서만 False가 되는 artifact 때문에 게이트 시 `keep_ego_connected`가 drivable을 전멸시킴 |
+| 마무리 | (TODO) | **ego 연결 성분만 남김**(`keep_ego_connected`) 구현 |
+| min_pts/min_extent | 실질 레버로 서술 | 이 데이터에선 무효(맵 조밀·작물 키큼). **z_gate가 유일한 실질 레버** |
+
+### A.2 사전 준비 (bag당 1회)
+1. **매핑**: bag → `map.pcd` + `trajectory.tum` (Point-LIO, `docs/MAPPING.md`).
+2. **이미지 추출**: bag → `frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`
+   ```bash
+   source /opt/ros/humble/setup.bash
+   python3 src/econ_camera_ros/econ_camera_ros/bag_extract.py <bag폴더> -o <추출폴더> [--limit N]
+   ```
+3. **calib**: `calib.yaml`(DS intrinsic 4대 + `T_cam_front` + **`T_front_lidar`**) + `orientation.json`.
+   `T_front_lidar` 키가 없으면 CLI가 명확한 메시지로 즉시 종료된다(Cam-LiDAR 캘리브 선행 필요).
+
+### A.3 단계1 — 품질 검증뷰 (특정 프레임 몇 개)
+장면↔라벨 육안 확인용 합성 PNG(3이미지 + BEV, 미터축·0.5m 격자·ego 40×40 박스). ROS 소스 불필요.
+```bash
+cd calibration/bev_autolabel
+mkdir -p <출력폴더>            # verify_labels 는 --out 을 자동 생성하지 않음
+python3 verify_labels.py \
+  --map-dir     ../../data/sj_bags/260722/maps/raws3_mapping \
+  --extract-dir ../../data/extracted/raws3 \
+  --calib       ../../data/calib_260723/calib.yaml \
+  --orient      ../../data/calib_260723/orientation.json \
+  --frames      900 2000 2500 4850 \
+  --out         ../../data/bev/review/raws3
+```
+→ `<출력>/bev_review_NNNNNN.png`. (z_gate=0.3 고정)
+
+### A.4 단계2 — 데이터셋 일괄 생성 (키프레임 전체)
+```bash
+cd calibration/bev_autolabel
+python3 generate.py \
+  --map-dir     ../../data/sj_bags/260722/maps/raws3_mapping \
+  --extract-dir ../../data/extracted/raws3 \
+  --calib       ../../data/calib_260723/calib.yaml \
+  --orient      ../../data/calib_260723/orientation.json \
+  --out         ../../data/bev/dataset/raws3 \
+  --kf-step 0.4        # 키프레임 이동거리 간격(m)
+  # --z-gate 0.3       # obstacle 바닥근접 여유(기본 0.3; 0.15면 통로 더 개방)
+  # --limit 3          # 스모크: 앞 N개만
+```
+→ `<출력>/sample_NNNNNN/` 마다:
+- **`label.png`** — 순수 class(0/1/2) **인덱스 팔레트**(오버레이 없음) = **재라벨링 원본**.
+- **`review.png`** — ego 40×40 박스·미터축 검수뷰(사람 검수용).
+- **`cam_{front,left,right}.jpg`** — 원본 3이미지.
+- **`meta.json`** — pose(`world_T_body`)·stamp·BEV 규격·사용 파라미터(z_gate·kf_step).
+- 그리고 최상위 **`dataset.csv`**(sample↔frame_idx↔stamp). 이미지 결손 키프레임은 건너뛰고 번호는 연속 유지.
+
+### A.5 파라미터 조정
+`--z-gate`(obstacle 바닥근접 여유)만 실질적 레버다. 0.6은 통로 위 캐노피 오검(비추), 0.15는 통로 개방, 0.3 절충(기본).
+`min_pts`·`min_extent`는 이 환경에선 무효. BEV 범위·해상도(XF/XR/YH/RES)는 `bev_label.BevSpec` 기본값 고정.
 
 ---
 
@@ -33,12 +107,15 @@
 
 | 항목 | PoC 경로 | 내용 |
 |---|---|---|
-| bag | `data/sj_bags/260722/record-all_with-sun_3` | 카메라4(`/dev/video0~3`)+LiDAR(`/unilidar/cloud`) 동기 녹화 |
-| 추출 이미지 | `data/cam_out/extracted/` | `bag_extract`로 뽑은 `frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`(타임스탬프) |
-| LIO 맵 | `data/sj_bags/260722/raws3_mapping/` | `map.pcd`(월드 밀집 클라우드, ~263만점), `trajectory.tum`(pose 46.5만, 궤적 162m) |
+| bag | `data/sj_bags/260722/bags/record-all_with-sun_3` | 카메라4(`/dev/video0~3`)+LiDAR(`/unilidar/cloud`) 동기 녹화 |
+| 추출 이미지 | `data/extracted/raws3/` | `bag_extract`로 뽑은 `frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`(타임스탬프) |
+| LIO 맵 | `data/sj_bags/260722/maps/raws3_mapping/` | `map.pcd`(월드 밀집 클라우드, ~263만점), `trajectory.tum`(pose 46.5만, 궤적 162m) |
 | 캘리브 | `data/calib_260723/calib.yaml` | DS intrinsic 4대 + 카메라간 extrinsic(`T_cam_front`) + **`T_front_lidar`** |
 | 카메라 방향 | `data/calib_260723/orientation.json` | 카메라 idx↔front/right/rear/left 매핑 |
 
+- **폴더 규칙(bag별 3쌍)**: `sj_bags/260722/bags/<원본bag>` ↔ `sj_bags/260722/maps/<name>_mapping`(LIO 산출)
+  ↔ `data/extracted/<name>`(추출 이미지). `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun.
+  라벨 1건 = `--map-dir maps/<name>_mapping` + `--extract-dir extracted/<name>` 쌍을 같은 `<name>`으로 맞춘다.
 - **맵 건강성 확인 필수**: `trajectory.tum` 총 길이를 실제 온실과 대조(궤적 붕괴 시 라벨 오염).
   PoC 맵은 길이 162.4m·범위 ~12m×35m·z변동 0.58m(평평) = 건강. (참고: `docs/MAPPING.md`, 온실 판정 기준)
 
@@ -83,6 +160,9 @@
 ---
 
 ## 6. Auto-Label 생성 파이프라인 (단계별 상세)
+
+> ⚠️ **아래는 PoC 서술이다.** 최종 구현은 **§A.1 변경사항 표**를 따른다(수직성 obstacle·국소 floor·카메라 FoV observed·
+> self 반경 0.28·corridor 무조건 drivable·ego 연결정리). 수치가 다르면 §A·스펙이 최신.
 
 ### Step 0. 로드
 - `map.pcd`(월드 클라우드), `trajectory.tum`(`load_tum`→ `times_ns`, `poses`),
@@ -195,16 +275,16 @@
 | `XF, XR, YH` | 3.0, 1.0, 2.0 m | BEV 전/후/좌우 범위 |
 | `RES` | 0.05 m | 셀 크기 (그리드 80×80) |
 | ego 셀 | (60, 40) | x=0,y=0 위치 |
-| self 반경/지속성 | <0.65 m / >60% pose | 카트 판정 |
+| self 반경/지속성 | **<0.28 m** / >60% pose | 카트 판정(40×40cm 반대각) |
 | self 복셀 `VOX` | 0.15 m | self-mask 양자화 |
 | self 샘플 pose 수 | 150 | 균등 샘플 |
 | 지역 크롭 반경 | 6 m (수평) | 맵→ego 프리필터 |
-| `floor` | z 2 퍼센타일 | 바닥 높이 |
-| 장애물 밴드 | [floor+0.1, floor+1.0] m | 낮은 밴드만 |
-| 장애물 셀 임계 | ≥2 점 | + morph open/close(3×3) |
+| `floor` | **국소(~1m 윈도) z 2 퍼센타일** | 바닥 높이 격자 |
+| 장애물 판정 | **수직성**: z_min ≤ floor+`z_gate`(0.3) AND extent ≥ 0.5 m | 천장·캐노피 배제 |
+| 장애물 셀 임계 | ≥2 점(이 데이터선 무효) | + morph open/close(3×3) |
 | corridor 궤적창 | ±20 s | 전방(x≥-0.2)만 |
-| corridor 반경 | 0.45 m(궤적) / 0.3 m(ego) | drivable 덮어쓰기 |
-| ray-cast | 0.5° 간격, 첫 장애물까지 | 가림 |
+| corridor 반경 | 0.45 m(궤적) / 0.3 m(ego) | **무조건 drivable**(관측 게이트 없음) |
+| observed | **카메라 FoV ∩ ray-cast**(0.5°, 첫 장애물까지) | 보이는 곳만 |
 | 클래스 | 0=obstacle,1=drivable,2=ignore | |
 | 입력 카메라 | front/left/right | rear 제외 |
 
@@ -220,11 +300,14 @@
 
 ---
 
-## 10. 다음 작업 (예정)
+## 10. 구현 완료 (2026-07-27) & 향후
 
-- **특정 bag 경로 + 그 LIO 맵 폴더 경로를 인자로** 받아, 위 파이프라인으로 auto-label을 **규격에 맞게 일괄 생성**하는 CLI 구현.
-- 출력 **폴더/네이밍 규칙, 저장 포맷(이미지·라벨·ignore마스크·calib·pose), 키프레임 간격**은 구현 착수 시 확정.
-- 의존: `calibration/cam_lidar`(chain·cloud_io·calib_io), `calibration/verify/ds_model`(load_rig). → **`feat/cam-lidar-calib` 브랜치가 먼저 병합돼야 함.**
+- CLI 구현 완료: **`calibration/bev_autolabel/`** (실행법 §A). 단계1 `verify_labels.py` + 단계2 `generate.py`.
+- 출력 규칙 확정: 샘플당 `label.png`(class 인덱스 팔레트) + `review.png`(검수뷰) + `cam_{front,left,right}.jpg` +
+  `meta.json`, 최상위 `dataset.csv`. 키프레임 = 이동거리 0.4m 간격.
+- 의존 모듈(`calibration/cam_lidar`, `calibration/verify`)은 이 브랜치(`feat/bev-autolabel`)에 포함됨.
+- **향후**: ①여러 bag/환경 확충(일반화) ②전방 동적물체(§7-E) 처리 ③어안→모델입력 언디스토션(§7-H)
+  ④사람 검수·재라벨링 툴로 최종 데이터셋 확정.
 
 ---
 

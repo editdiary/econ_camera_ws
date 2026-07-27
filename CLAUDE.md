@@ -2,7 +2,7 @@
 
 이 저장소에서 작업할 때 참고할 핵심 사항. 상세 설계는 아래 spec을, 사용법은 `docs/USAGE.md`를 참조.
 
-## 현재 상태 (2026-07-23)
+## 현재 상태 (2026-07-27)
 카메라 4대 연속 동기 수집은 **구현 완료**(실기 4대 수동 검증만 남음). 구성:
 - `capture`(`capture_node.py`): 단일 파이프라인 캡처 → `CompressedImage` 발행. **워밍업**
   (`warmup_s` 기본 4s: 프레임 폐기로 4대 정상 확인 후 첫 클린 사이클부터 발행 → 시작 프레임 수 일치).
@@ -33,9 +33,17 @@
   수동 2D-3D 대응점 클릭 + DS-PnP). 카메라 간 extrinsic 체인에 라이다를 한 단으로 붙인다.
   절차·판정 기준은 `docs/CAM_LIDAR_CALIBRATION.md`. 순수 로직 테스트 통과, 실기(정지 촬영·
   대응점 클릭·solve RMS·오버레이 검증)만 남음.
+- **BEV auto-label**(3어안→BEV occupancy 학습 정답 자동생성): 파이프라인 CLI 구현 완료
+  (`calibration/bev_autolabel/`: 수직성 obstacle+국소floor / 카메라 FoV∩가림 observed / 정밀 ego(0.28m) /
+  corridor 무조건 drivable). 단계1 `verify_labels.py`(검수 PNG) + 단계2 `generate.py`(데이터셋 일괄).
+  raws3 + 타 bag 4종 검증. 실행법·변경사항은 `docs/BEV_AUTOLABEL.md §A`. 순수 테스트 21개.
 - 순수 로직 테스트 18개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
-  한 곳으로 모은다. `third_party/point_lio_unilidar`(upstream 원본 클론)는 빌드에 안 쓰이며
+  한 곳으로 모은다. 하위 구조:
+  - `data/sj_bags/<날짜>/{bags,maps}/` — 현장 원본 bag(`bags/`) + 그 bag의 Point-LIO 산출(`maps/<name>_mapping/`).
+  - `data/extracted/<name>/` — bag별 추출 이미지(`frame_NNNNNN/cam{0..3}.jpg`+`sets.csv`). `<name>`: `raws{N}`=with-sun / `rawos{N}`=without-sun. bag↔map↔extracted를 같은 `<name>`으로 짝짓는다.
+  - `data/calib_260723/`(cam-cam 캘리브)·`data/cam-lidar_calib_260724/`(cam-LiDAR 캘리브)·`data/bev/{review,dataset}/`(BEV 검수뷰·데이터셋)·`data/_archive/`(폐기·임시 모음).
+  `third_party/point_lio_unilidar`(upstream 원본 클론)는 빌드에 안 쓰이며
   (매핑은 `src/point_lio` 사용) gitignore 처리됨.
 
 ## 프로젝트
@@ -83,7 +91,9 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 - **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)
 - **Cam-LiDAR 캘리브 가이드**: `docs/CAM_LIDAR_CALIBRATION.md` (T_front_lidar, 수동 2D-3D 대응+DS-PnP, 정지 1단계·모션보정 2단계)
 - **매핑 가이드**: `docs/MAPPING.md` (오프라인 LIO 실행·산출물·시각화·판정)
-- **BEV 자동라벨 파이프라인**: `docs/BEV_AUTOLABEL.md` (3어안→BEV occupancy 학습용 auto-label; 규격·단계·특이사항·참조구현. PoC 검증 완료, CLI 구현 예정)
+- **BEV 자동라벨 파이프라인**: `docs/BEV_AUTOLABEL.md` (3어안→BEV occupancy 학습용 auto-label; 규격·단계·특이사항·**§A 실행 가이드(CLI)**. PoC·CLI 구현 완료 `calibration/bev_autolabel/`, 다중 bag 검증)
+- 설계 스펙(BEV auto-label 품질개선): `docs/superpowers/specs/2026-07-27-bev-autolabel-quality-improvement-design.md`
+- 구현 계획(BEV auto-label): `docs/superpowers/plans/2026-07-27-bev-autolabel-quality-improvement.md`
 - 설계 스펙(매핑): `docs/superpowers/specs/2026-07-20-lio-mapping-integration-design.md`
 - 설계 스펙(캘리브·검증): `docs/superpowers/specs/2026-07-18-camera-calibration-and-verification-design.md`
 - 구현 계획(캘리브): `docs/superpowers/plans/2026-07-18-camera-calibration-and-verification.md`

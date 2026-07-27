@@ -274,7 +274,7 @@ python3 calibration/verify/verify_panorama.py  --images data/calib_260723/extrac
 # 카메라 간 겹침(checkerboard/blend) — extrinsic
 python3 calibration/verify/verify_extrinsics.py --images data/calib_260723/extracted --frames "800,1600"
 # 직접 수집 이미지에 적용(최종 실증) — --out 로 분리 저장
-python3 calibration/verify/verify_undistort.py --images data/cam_out/raws1_out-images --out data/cam_out/verify/undistort
+python3 calibration/verify/verify_undistort.py --images data/extracted/raws1 --out data/extracted/raws1/verify_undistort
 ```
 
 - **판정**: 핀홀에서 격자·창틀·기둥이 곧은 직선, 원통에서 수직선이 수직, 파노라마/겹침에서
