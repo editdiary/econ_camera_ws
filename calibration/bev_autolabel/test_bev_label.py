@@ -236,3 +236,17 @@ def test_colorize_and_review_shapes():
     dummy = {n: np.zeros((720, 1280, 3), np.uint8) for n in ("front", "left", "right")}
     rev = render.review_image(lab, s, dummy, scale=8)
     assert rev.ndim == 3 and rev.shape[2] == 3 and rev.shape[0] > s.NX
+
+
+def test_review_image_draws_ego_box():
+    import render
+    s = BevSpec()
+    lab = np.full((s.NX, s.NY), 2, np.uint8)
+    scale = 8
+    rev = render.review_image(lab, s, {}, scale=scale)  # cam_imgs 없음 → BEV만 반환(스택 오프셋 없음)
+    ex, ey = s.C_EGO * scale, s.R_EGO * scale
+    half = int(round(0.2 / s.RES)) * scale
+    assert tuple(rev[ey, ex - half]) == (255, 255, 255)   # 박스 좌변
+    assert tuple(rev[ey, ex + half]) == (255, 255, 255)   # 박스 우변
+    assert tuple(rev[ey - half, ex]) == (255, 255, 255)   # 박스 상변
+    assert tuple(rev[ey + half, ex]) == (255, 255, 255)   # 박스 하변

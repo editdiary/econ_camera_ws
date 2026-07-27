@@ -34,6 +34,8 @@ def review_image(label, spec, cam_imgs, scale=8):
     ex, ey = spec.C_EGO * scale, spec.R_EGO * scale
     cv2.circle(bev, (ex, ey), 4, (255, 255, 255), -1)
     cv2.arrowedLine(bev, (ex, ey), (ex, ey - 4 * scale), (255, 255, 255), 2, tipLength=0.3)
+    half = int(round(0.2 / spec.RES)) * scale            # 40x40cm footprint, half = 0.2m
+    cv2.rectangle(bev, (ex - half, ey - half), (ex + half, ey + half), (255, 255, 255), 2)
     # 상단 3카메라(front/left/right) 가로 배치, BEV 폭에 맞춤
     order = [n for n in ("front", "left", "right") if cam_imgs.get(n) is not None]
     if order:
