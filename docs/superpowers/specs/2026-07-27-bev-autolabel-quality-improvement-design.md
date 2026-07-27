@@ -57,13 +57,18 @@ BEV 규격(80×80, `XF=3.0/XR=1.0/YH=2.0/RES=0.05`, ego셀 (60,40)), self-mask *
 - self-mask 지속성 판정(150 pose 샘플, >60% 지속, 0.15m 복셀)은 유지하고 **반경만 0.65m → 0.28m**
   (40×40cm의 반대각 ≈ 0.283m). 카트만 잡고 0.7m 옆 작물벽/기둥은 반경 밖이라 보존.
 
-### D. 전방 corridor (drivable prior) — 유지
+### D. 전방 corridor (drivable ground-truth) — 무조건 drivable
 - 시각 `t` ±20s 궤적의 **전방(x ≥ -0.2)** pose마다 반경 0.45m 원 + ego 반경 0.3m 원을 drivable로.
-- 단, **`observed` 안에서만** 적용(안 보이는 전방까지 강제 drivable 하지 않음).
+- **`observed` 게이트 없이 무조건 drivable**로 마킹한다(로봇이 실제 지나간 궤적 = 확실한 ground-truth).
+  - ⚠️ **구현 중 발견(중요)**: LiDAR/카메라가 높은 마스트에 있어 **ego 바로 밑 지면점이 모든 카메라 FoV 가장자리**라
+    `fov`가 정확히 ego 셀에서만 False가 된다. corridor를 `observed`로 게이트하면 ego 셀이 drivable이 아니게 되고,
+    `keep_ego_connected`(ego 셀 seed)가 **전체 drivable을 통째로 지운다**(실증: baseline이 초록 0). corridor를
+    무조건 drivable로 두면 ego 셀이 drivable이 되어 연결 seed가 살아나고, 이는 궤적=ground-truth 관점과도 일치한다.
+  - corridor는 궤적 ±0.45m 전방 + ego 원이라 대부분 이미 `observed`이며, 무조건화로 추가되는 셀은 마스트-아래 artifact뿐.
 
 ### E. 라벨 조립 + 정리
 - 기본 `2(ignore)`.
-- `observed & obstacle → 0(obstacle)`, `observed & ~obstacle → 1(drivable)`, `corridor & observed → 1`.
+- `observed & obstacle → 0(obstacle)`, `observed & ~obstacle → 1(drivable)`, `corridor → 1`(무조건, §D 참조).
 - **마무리(신규)**: ego셀과 연결된 drivable 성분만 남겨 잔여 pocket/섬 제거(PoC §12 TODO 반영).
 
 ## 3. 산출물 (2단계)
@@ -111,8 +116,10 @@ BEV 규격(80×80, `XF=3.0/XR=1.0/YH=2.0/RES=0.05`, ego셀 (60,40)), self-mask *
 | column 수직 extent | ≥ 0.5 m | 수직구조 판정 |
 | obstacle 셀 임계 | ≥ 2 점 | + morph open/close(3×3) |
 | ego 반경 | 0.28 m | 40×40 반대각, 카트만 |
-| corridor 반경 | 0.45 m(궤적)/0.3 m(ego) | observed 내에서만 |
+| corridor 반경 | 0.45 m(궤적)/0.3 m(ego) | **무조건 drivable**(§D) |
 | ray-cast | 0.5° 간격 | 가림 |
 | 키프레임 | 0.4 m 이동 | CLI |
 
-> 표의 값은 단계1 튜닝 후 확정치로 갱신한다.
+> **단계1 검증(raws3, 프레임 900·2000·2500·4850) 결과**: 위 **초기값 그대로** 품질 판정 기준 4개를 모두 만족
+> (초록 통로가 작물벽 사이에 깔끔·경계 정확, 후방/가림 회색, 가까운 기둥 보존). 별도 파라미터 튜닝 불필요.
+> 유일한 변경은 §D의 corridor 무조건 drivable(관측 게이트 제거)이며, 이는 파라미터가 아니라 로직 결정이다.

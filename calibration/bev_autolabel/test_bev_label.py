@@ -217,6 +217,16 @@ def test_build_label_synthetic_corridor():
     assert lab[s.R_EGO - 20, s.C_EGO] == 1
 
 
+def test_assemble_label_corridor_unconditional_drivable():
+    s = BevSpec()
+    observed = np.zeros((s.NX, s.NY), bool)          # nothing observed
+    obs_rc = np.zeros((s.NX, s.NY), bool)
+    corridor = np.zeros((s.NX, s.NY), bool)
+    corridor[s.R_EGO, s.C_EGO] = True                 # ego cell in corridor, unobserved
+    lab = assemble_label(observed, obs_rc, corridor, s)
+    assert lab[s.R_EGO, s.C_EGO] == 1                  # corridor drivable despite not observed
+
+
 def test_colorize_and_review_shapes():
     import render
     s = BevSpec()

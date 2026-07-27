@@ -187,7 +187,7 @@ def assemble_label(observed, obs_rc, corridor, spec):
     label = np.full((spec.NX, spec.NY), 2, np.uint8)
     label[observed & ~obs_rc] = 1
     label[observed & obs_rc] = 0
-    label[corridor & observed] = 1
+    label[corridor] = 1
     driv = keep_ego_connected(label == 1, spec)
     label[(label == 1) & ~driv] = 2
     return label
