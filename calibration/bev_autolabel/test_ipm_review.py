@@ -12,6 +12,17 @@ from bev_label import BevSpec                       # noqa: E402
 from ds_model import DoubleSphereCamera             # noqa: E402
 from chain import project                            # noqa: E402
 from ipm_review import ipm_project_mask, fuse_labels, _cell_dist  # noqa: E402
+from dataset_flatten import parse_sample_cam                       # noqa: E402
+
+
+def test_parse_sample_cam():
+    assert parse_sample_cam("sample_000012__cam_front.jpg") == ("sample_000012", "front")
+    # 툴이 접미사를 붙여도 인식
+    assert parse_sample_cam("sample_000000__cam_left_png.rf.ABC.png") == ("sample_000000", "left")
+    assert parse_sample_cam("sample_000003__cam_right.png") == ("sample_000003", "right")
+    # rear 는 USE 밖 → 미인식(제외)
+    assert parse_sample_cam("sample_000003__cam_rear.png") == (None, None)
+    assert parse_sample_cam("random.png") == (None, None)
 
 
 def _pinhole(fx=300.0, cx=640.0, cy=360.0):

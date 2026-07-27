@@ -98,6 +98,16 @@ python3 generate.py \
 - **왜 H(카메라 바닥 위 높이)가 필요**: 마스트 LiDAR는 바닥을 못 봐 H를 못 준다 → **자로 실측**(예: 렌즈 0.87m). `--cam-height`.
 - **마스크 레이아웃**(데이터셋 sample 구조 미러링): `<mask-dir>/sample_NNNNNN/cam_{front,left,right}.png`(흰=drivable).
   마스크 있는 sample 만 처리(부분 라벨 OK). calib·orient·z_gate 는 sample `meta.json` 에서 자동으로 읽음(플래그로 덮어쓰기 가능).
+- **annotation tool 연동(파일명 충돌 해결)**: sample마다 `cam_front/left/right` 이름이 겹쳐 한 폴더에 못 모은다.
+  `dataset_flatten.py`로 펼치고(export) 되돌린다(gather):
+  ```bash
+  # 1) 펼치기(업로드용): <flat>/sample_NNNNNN__cam_{name}.jpg (이름 유일)
+  python3 dataset_flatten.py export --dataset-dir ../../data/bev/dataset/temp_raws1 --out <flat_imgs>
+  # 2) annotation tool에서 마스크 작업 → export
+  # 3) 되돌리기: 마스크 → annotations/<bag>/sample_NNNNNN/cam_{name}.png
+  python3 dataset_flatten.py gather --flat-masks <flat_masks> --out ../../data/bev/annotations/temp_raws1
+  ```
+  gather는 파일명에 `sample_NNNNNN__cam_<name>` 만 있으면 툴이 접미사를 붙여도 인식, 마스크는 >0 을 drivable로 이진화.
 ```bash
 cd calibration/bev_autolabel
 python3 ipm_review.py \
