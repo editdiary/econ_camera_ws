@@ -176,3 +176,42 @@ def test_assemble_label_values():
     assert lab[s.R_EGO - 5, s.C_EGO] == 0               # obstacle
     assert lab[s.R_EGO - 1, s.C_EGO] == 1               # drivable
     assert lab[0, 0] == 2                               # 미관측 ignore
+
+
+from bev_label import build_label
+
+
+def test_build_label_synthetic_corridor():
+    """직선 통로 합성: 좌우 벽(작물), 가운데 빈 길. front 카메라만. 라벨이 3값을 모두 포함."""
+    s = BevSpec()
+    # 월드=ego(pose=단위, 원점 정지). 좌우 y=±1.0 에 수직 벽, x 0~3m.
+    # 벽 두께 ~0.14m(인접 여러 열)로 줘야 obstacle_mask 의 3x3 MORPH_OPEN 에서 안 지워짐
+    # (test_obstacle_column_detected 와 동일한 이유). dy 간격은 grid pitch(0.05)와 안 맞게
+    # 잡아 부동소수 경계 오차로 열이 건너뛰지 않게 함(-1e-6 오프셋도 동일 목적).
+    walls = []
+    for x in np.arange(0, 3, 0.05):
+        for z in np.arange(0.05, 1.6, 0.05):
+            for dy in np.arange(-0.07, 0.08, 0.02):
+                walls.append([x, 1.0 - 1e-6 + dy, z])
+                walls.append([x, -1.0 + 1e-6 - dy, z])
+    p = np.array(walls, float)
+    times = np.array([0, int(1e9)], np.int64)
+    poses = [np.eye(4), np.eye(4)]
+    tpos = np.array([[0, 0, 0], [0.5, 0, 0]], float)
+    cams = {"front": _front_cam()}
+    Tcf = np.array([[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0, 0, 0, 1]], float)
+    # T_front_lidar 에 0.1m 전방 baseline(실제 Cam-LiDAR extrinsic처럼 카메라·라이다가
+    # 동일 원점이 아님). identity 로 두면 ego 셀 중심(그리드 반칸 오프셋으로 x=-0.025)이
+    # 카메라 광학계 z<=0(바로 뒤)에 걸려 어느 카메라에서도 안 보여 keep_ego_connected 가
+    # drivable 을 전부 걷어내 버림 — 순수 함수가 아니라 이 zero-baseline 가정이 비현실적.
+    T_front_lidar = np.array([[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], float)
+    lab = build_label(p, times, poses, tpos, np.array([], np.int64),
+                      cams, {"front": Tcf}, T_front_lidar, 0, s,
+                      use_names=("front",),
+                      )
+    assert lab.shape == (80, 80)
+    assert (lab == 0).any()      # 벽 = obstacle
+    assert (lab == 1).any()      # 통로 = drivable
+    assert (lab == 2).any()      # 후방/밖 = ignore
+    # 가운데 전방은 drivable, 좌우 벽 위치는 obstacle
+    assert lab[s.R_EGO - 20, s.C_EGO] == 1

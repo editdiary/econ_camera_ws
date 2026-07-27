@@ -191,3 +191,30 @@ def assemble_label(observed, obs_rc, corridor, spec):
     driv = keep_ego_connected(label == 1, spec)
     label[(label == 1) & ~driv] = 2
     return label
+
+
+def build_label(p, times_ns, poses, tpos, self_voxels, cams, T_cam_front,
+                T_front_lidar, t_ns, spec, use_names=("front", "left", "right"),
+                near=6.0, vox=0.15, win_s=20.0):
+    """한 키프레임 라벨(0/1/2). p=월드 클라우드(N,3), tpos=pose 위치(T,3)."""
+    T_wb = pose_at(times_ns, poses, t_ns)
+    T_bw = se3_inv(T_wb)
+    ctr = T_wb[:3, 3]
+    near_m = (np.abs(p[:, 0] - ctr[0]) < near) & (np.abs(p[:, 1] - ctr[1]) < near)
+    P = transform(T_bw, p[near_m])
+    if len(self_voxels):
+        keys = _key3(np.floor(P / vox).astype(int))
+        P = P[~np.isin(keys, self_voxels)]
+    crop = (P[:, 0] <= spec.XF) & (P[:, 0] >= -spec.XR) & (np.abs(P[:, 1]) <= spec.YH)
+    P = P[crop]
+    floor = floor_grid(P, spec)
+    obstacle = obstacle_mask(P, floor, spec)
+    tw = np.abs(times_ns - t_ns) < int(win_s * 1e9)
+    TE = transform(T_bw, tpos[tw]) if tw.any() else np.empty((0, 3))
+    corridor = corridor_mask(TE, spec)
+    obs_rc = obstacle & ~corridor
+    fov = fov_mask(floor, spec, cams, T_cam_front, T_front_lidar,
+                  use_names=use_names)
+    visible = raycast_visible(obs_rc, spec)
+    observed = fov & visible
+    return assemble_label(observed, obs_rc, corridor, spec)
