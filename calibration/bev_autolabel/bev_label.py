@@ -106,3 +106,34 @@ def obstacle_mask(P, floor, spec, z_gate=0.3, min_extent=0.5, min_pts=2):
     obs = cv2.morphologyEx(obs, cv2.MORPH_OPEN, k)
     obs = cv2.morphologyEx(obs, cv2.MORPH_CLOSE, k)
     return obs.astype(bool)
+
+
+def fov_mask(floor, spec, cams, T_cam_front, T_front_lidar,
+             use_names=("front", "left", "right")):
+    """각 BEV 셀 지면점을 카메라로 투영. 이미지 안 & DS 유효면 그 카메라 FoV."""
+    X, Y = cell_centers(spec)
+    P = np.stack([X, Y, floor], axis=-1).reshape(-1, 3)   # ego(=lidar) 프레임 지면점
+    mask = np.zeros(spec.NX * spec.NY, bool)
+    for name in use_names:
+        cam = cams[name]
+        u, v, ok = project(P, T_front_lidar, T_cam_front[name], cam)
+        inimg = ok & (u >= 0) & (u < cam.width) & (v >= 0) & (v < cam.height)
+        mask |= inimg
+    return mask.reshape(spec.NX, spec.NY)
+
+
+def raycast_visible(obstacle, spec, step_deg=0.5):
+    """ego셀에서 0.5° 간격 광선 → 첫 obstacle까지 visible."""
+    NX, NY = spec.NX, spec.NY
+    vis = np.zeros((NX, NY), bool)
+    for a in np.deg2rad(np.arange(0, 360, step_deg)):
+        dr, dc = np.cos(a), np.sin(a)
+        for rr in np.arange(0.0, NX + NY, 0.5):
+            r = int(round(spec.R_EGO + dr * rr))
+            c = int(round(spec.C_EGO + dc * rr))
+            if not (0 <= r < NX and 0 <= c < NY):
+                break
+            vis[r, c] = True
+            if obstacle[r, c]:
+                break
+    return vis

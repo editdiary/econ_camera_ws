@@ -3,6 +3,11 @@ import numpy as np
 from bev_label import BevSpec, rc_of, cell_centers, _key3
 from bev_label import floor_grid, obstacle_mask
 
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "verify"))
+from ds_model import DoubleSphereCamera
+from bev_label import fov_mask, raycast_visible
+
 
 def test_bevspec_derived_shapes():
     s = BevSpec()
@@ -84,3 +89,35 @@ def test_floor_noise_speck_not_obstacle():
     obs = obstacle_mask(P, floor, s)
     r, c = rc_of(0.5, 0.5, s)
     assert not obs[int(r), int(c)]
+
+
+def _front_cam():
+    # 전방을 +z로 보는 표준 핀홀 유사 DS(alpha=0.5, xi=0): z>0 만 유효
+    return DoubleSphereCamera(xi=0.0, alpha=0.5, fx=300, fy=300, cx=640, cy=360,
+                              width=1280, height=720, name="front")
+
+
+def test_fov_forward_visible_backward_not():
+    s = BevSpec()
+    floor = np.zeros((s.NX, s.NY))
+    cams = {"front": _front_cam()}
+    # front 카메라: LiDAR +x(전방)를 카메라 +z로 보내는 회전 T_cam_front
+    Tcf = np.array([[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0, 0, 0, 1]], float)
+    fov = fov_mask(floor, s, cams, {"front": Tcf}, np.eye(4), use_names=("front",))
+    r_f, c_f = rc_of(2.0, 0.0, s)     # 전방 2m → 보여야
+    r_b, c_b = rc_of(-0.5, 0.0, s)    # 후방 → 안 보여야(카메라 뒤)
+    assert fov[int(r_f), int(c_f)]
+    assert not fov[int(r_b), int(c_b)]
+
+
+def test_raycast_blocks_behind_wall():
+    s = BevSpec()
+    obs = np.zeros((s.NX, s.NY), bool)
+    # ego 앞(전방 1m) 가로벽
+    rw, _ = rc_of(1.0, 0.0, s)
+    obs[int(rw), :] = True
+    vis = raycast_visible(obs, s)
+    r_near, c_near = rc_of(0.5, 0.0, s)   # 벽 앞: 보임
+    r_far, c_far = rc_of(2.0, 0.0, s)     # 벽 뒤: 가려짐
+    assert vis[int(r_near), int(c_near)]
+    assert not vis[int(r_far), int(c_far)]
