@@ -215,3 +215,14 @@ def test_build_label_synthetic_corridor():
     assert (lab == 2).any()      # 후방/밖 = ignore
     # 가운데 전방은 drivable, 좌우 벽 위치는 obstacle
     assert lab[s.R_EGO - 20, s.C_EGO] == 1
+
+
+def test_colorize_and_review_shapes():
+    import render
+    s = BevSpec()
+    lab = np.full((s.NX, s.NY), 2, np.uint8); lab[30:40, 30:40] = 1; lab[10, 10] = 0
+    rgb = render.colorize(lab)
+    assert rgb.shape == (s.NX, s.NY, 3) and rgb.dtype == np.uint8
+    dummy = {n: np.zeros((720, 1280, 3), np.uint8) for n in ("front", "left", "right")}
+    rev = render.review_image(lab, s, dummy, scale=8)
+    assert rev.ndim == 3 and rev.shape[2] == 3 and rev.shape[0] > s.NX
