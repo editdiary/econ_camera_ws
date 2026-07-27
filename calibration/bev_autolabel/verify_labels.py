@@ -42,6 +42,8 @@ def main():
     spec = BevSpec()
     rig = load_rig(a.calib, a.orient)
     T_front_lidar = load_T_front_lidar(a.calib)
+    if T_front_lidar is None:
+        sys.exit("calib.yaml에 extrinsics.T_front_lidar가 없습니다 (Cam-LiDAR 캘리브 필요)")
     p, times, poses, tpos = bev_io.load_map(a.map_dir)
     stamps = bev_io.load_stamps(a.extract_dir)
     print(f"map points={len(p)} poses={len(poses)}")
@@ -50,6 +52,9 @@ def main():
 
     out = pathlib.Path(a.out)
     for idx in a.frames:
+        if idx not in stamps:
+            print(f"skip: frame {idx} not in sets.csv")
+            continue
         t_ns = stamps[idx]
         lab = build_label(p, times, poses, tpos, self_vox,
                           rig.cams_by_name, rig.T_cam_front, T_front_lidar, t_ns, spec)

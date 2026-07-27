@@ -195,7 +195,7 @@ def assemble_label(observed, obs_rc, corridor, spec):
 
 def build_label(p, times_ns, poses, tpos, self_voxels, cams, T_cam_front,
                 T_front_lidar, t_ns, spec, use_names=("front", "left", "right"),
-                near=6.0, vox=0.15, win_s=20.0):
+                near=6.0, vox=0.15, win_s=20.0, z_gate=0.3):
     """한 키프레임 라벨(0/1/2). p=월드 클라우드(N,3), tpos=pose 위치(T,3)."""
     T_wb = pose_at(times_ns, poses, t_ns)
     T_bw = se3_inv(T_wb)
@@ -208,7 +208,7 @@ def build_label(p, times_ns, poses, tpos, self_voxels, cams, T_cam_front,
     crop = (P[:, 0] <= spec.XF) & (P[:, 0] >= -spec.XR) & (np.abs(P[:, 1]) <= spec.YH)
     P = P[crop]
     floor = floor_grid(P, spec)
-    obstacle = obstacle_mask(P, floor, spec)
+    obstacle = obstacle_mask(P, floor, spec, z_gate=z_gate)
     tw = np.abs(times_ns - t_ns) < int(win_s * 1e9)
     TE = transform(T_bw, tpos[tw]) if tw.any() else np.empty((0, 3))
     corridor = corridor_mask(TE, spec)
@@ -218,3 +218,16 @@ def build_label(p, times_ns, poses, tpos, self_voxels, cams, T_cam_front,
     visible = raycast_visible(obs_rc, spec)
     observed = fov & visible
     return assemble_label(observed, obs_rc, corridor, spec)
+
+
+def select_keyframes(stamps, times_ns, poses, kf_step=0.4):
+    """카메라 프레임 stamp를 pose 이동거리 kf_step(m) 간격으로 서브샘플. idx 오름차순 리스트."""
+    order = sorted(stamps)
+    kept, last = [], None
+    for idx in order:
+        T = pose_at(times_ns, poses, stamps[idx])
+        pos = T[:3, 3]
+        if last is None or np.linalg.norm(pos - last) >= kf_step:
+            kept.append(idx)
+            last = pos
+    return kept

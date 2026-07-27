@@ -217,6 +217,40 @@ def test_build_label_synthetic_corridor():
     assert lab[s.R_EGO - 20, s.C_EGO] == 1
 
 
+def test_build_label_self_voxels_removes_column():
+    """self_voxels 로 마킹된 점은 obstacle 판정 전에 제거된다(카트/센서 자기 형상 배제).
+    corridor(궤적/ego 원)가 덮지 않는 위치에 기둥을 둬서 obstacle 유무가 최종 label에
+    그대로 드러나게 함(corridor 내부면 assemble_label 이 무조건 drivable로 덮어써 구분 불가)."""
+    s = BevSpec()
+    cams = {"front": _front_cam()}
+    Tcf = np.array([[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0, 0, 0, 1]], float)
+    T_front_lidar = np.array([[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], float)
+    times = np.array([0, int(1e9)], np.int64)
+    poses = [np.eye(4), np.eye(4)]
+    tpos = np.array([[0, 0, 0], [0.5, 0, 0]], float)   # corridor는 x축 근방(반경 0.45)만 덮음
+
+    # (1.52, 0.63): corridor(궤적 반경0.45·ego 반경0.3)에서 벗어난 유일한 obstacle.
+    # 그리드 경계(0.05 배수)를 피해 부동소수 floor 경계 문제를 원천적으로 회피.
+    # test_obstacle_column_detected 와 동일 이유로 3x3 블록으로 흩어(MORPH_OPEN 생존).
+    cx, cy = 1.52, 0.63
+    cols = [_column(cx + dx, cy + dy, 0.05, 1.5)
+            for dx in (-0.05, 0, 0.05) for dy in (-0.05, 0, 0.05)]
+    p = np.vstack(cols)
+    self_voxels = np.unique(_key3(np.floor(p / 0.15).astype(int)))
+
+    # 기둥이 덮는 3x3 셀 범위(raycast 각도 이산화로 각 셀의 가시성이 흔들릴 수 있어
+    # 단일 셀 대신 이 범위 안에 obstacle(0)이 있는지로 판정).
+    r, c = rc_of(cx, cy, s)
+    reg = np.s_[int(r) - 1:int(r) + 2, int(c) - 1:int(c) + 2]
+    kwargs = dict(use_names=("front",))
+    lab_no_self = build_label(p, times, poses, tpos, np.array([], np.int64),
+                              cams, {"front": Tcf}, T_front_lidar, 0, s, **kwargs)
+    lab_with_self = build_label(p, times, poses, tpos, self_voxels,
+                                cams, {"front": Tcf}, T_front_lidar, 0, s, **kwargs)
+    assert (lab_no_self[reg] == 0).any()          # self_voxels 없으면 obstacle 존재
+    assert not (lab_with_self[reg] == 0).any()    # self_voxels 로 제거되면 obstacle 없음
+
+
 def test_assemble_label_corridor_unconditional_drivable():
     s = BevSpec()
     observed = np.zeros((s.NX, s.NY), bool)          # nothing observed
@@ -250,3 +284,20 @@ def test_review_image_draws_ego_box():
     assert tuple(rev[ey, ex + half]) == (255, 255, 255)   # 박스 우변
     assert tuple(rev[ey - half, ex]) == (255, 255, 255)   # 박스 상변
     assert tuple(rev[ey + half, ex]) == (255, 255, 255)   # 박스 하변
+
+
+from bev_label import select_keyframes
+
+
+def test_select_keyframes_by_displacement():
+    # 0.1m 간격 11프레임 → 0.4m 스텝이면 idx 0,4,8 근처만 선택
+    stamps = {i: int(i * 1e8) for i in range(11)}
+    times = np.array([int(i * 1e8) for i in range(11)], np.int64)
+    poses = [np.eye(4) for _ in range(11)]
+    for i in range(11):
+        poses[i][0, 3] = i * 0.1
+    kf = select_keyframes(stamps, times, poses, kf_step=0.4)
+    assert kf[0] == 0
+    # 연속 선택 간 이동거리 >= 0.4m (마지막 제외)
+    xs = [poses[i][0, 3] for i in kf]
+    assert all(xs[j + 1] - xs[j] >= 0.4 - 1e-9 for j in range(len(xs) - 1))
