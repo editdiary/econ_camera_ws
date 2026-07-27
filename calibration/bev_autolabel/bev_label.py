@@ -63,3 +63,46 @@ def _key3(C):
     """(M,3) int 복셀좌표 → 유니크 해시키(int64). PoC와 동일 규약."""
     C = np.asarray(C)
     return (C[:, 0] + 100) * 1_000_000 + (C[:, 1] + 100) * 1000 + (C[:, 2] + 100)
+
+
+def floor_grid(P, spec, win=1.0, pct=2.0):
+    """국소 저-퍼센타일 바닥 격자. 빈 윈도는 전역 저-퍼센타일로 채움."""
+    NX, NY = spec.NX, spec.NY
+    floor = np.full((NX, NY), np.nan)
+    if len(P) == 0:
+        return np.zeros((NX, NY))
+    r, c = rc_of(P[:, 0], P[:, 1], spec)
+    inb = (r >= 0) & (r < NX) & (c >= 0) & (c < NY)
+    r, c, z = r[inb], c[inb], P[inb, 2]
+    wc = max(1, int(round(win / spec.RES)))
+    gwr, gwc = r // wc, c // wc
+    for wr in range(0, NX, wc):
+        for wcol in range(0, NY, wc):
+            m = (gwr == wr // wc) & (gwc == wcol // wc)
+            if int(m.sum()) >= 3:
+                floor[wr:wr + wc, wcol:wcol + wc] = np.percentile(z[m], pct)
+    g = np.percentile(z, pct) if len(z) else 0.0
+    floor[np.isnan(floor)] = g
+    return floor
+
+
+def obstacle_mask(P, floor, spec, z_gate=0.3, min_extent=0.5, min_pts=2):
+    """수직성 테스트: 셀 점들이 바닥까지 이어지고(z_min<=floor+z_gate) 세로로 길면(z_max-z_min>=min_extent) obstacle."""
+    NX, NY = spec.NX, spec.NY
+    zmin = np.full((NX, NY), np.inf)
+    zmax = np.full((NX, NY), -np.inf)
+    cnt = np.zeros((NX, NY), int)
+    if len(P):
+        r, c = rc_of(P[:, 0], P[:, 1], spec)
+        inb = (r >= 0) & (r < NX) & (c >= 0) & (c < NY)
+        r, c, z = r[inb], c[inb], P[inb, 2]
+        np.minimum.at(zmin, (r, c), z)
+        np.maximum.at(zmax, (r, c), z)
+        np.add.at(cnt, (r, c), 1)
+    reaches = zmin <= (floor + z_gate)
+    extent = (zmax - zmin) >= min_extent
+    obs = (reaches & extent & (cnt >= min_pts)).astype(np.uint8)
+    k = np.ones((3, 3), np.uint8)
+    obs = cv2.morphologyEx(obs, cv2.MORPH_OPEN, k)
+    obs = cv2.morphologyEx(obs, cv2.MORPH_CLOSE, k)
+    return obs.astype(bool)
