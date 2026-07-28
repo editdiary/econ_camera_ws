@@ -86,6 +86,7 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 - **브랜치 병합·푸시는 사용자가 직접** 한다 — Claude는 새 브랜치 생성과 **커밋까지만** 수행.
 
 ## 상세 문서
+- **전체 파이프라인(순차 따라하기)**: `docs/PIPELINE.md` (데이터 수집→매핑→캘리브→LiDAR/IPM auto-label→최종 검수까지 단계별 실행·옵션·산출물, 상세 문서 링크 허브)
 - **사용 가이드**: `docs/USAGE.md` (녹화·모니터·bag 추출·파라미터·문제해결)
 - **문제해결**: `docs/TROUBLESHOOTING.md` (실기 운영 중 겪은 문제 사례별 정리)
 - **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)
