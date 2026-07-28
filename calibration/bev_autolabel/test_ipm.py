@@ -62,3 +62,26 @@ def test_ipm_canvas_shape_and_fill():
                         np.eye(4), 0.87, spec, use_names=("front",))
     assert canvas.shape == (spec.NX, spec.NY, 3) and canvas.dtype == np.uint8
     assert (canvas > 0).any()
+
+
+def test_ipm_nearest_never_blends_two_cameras():
+    # 두 카메라(동일 기하, 색만 다름)를 완전히 겹치게 투영.
+    # average 는 겹침 셀에 중간색(25,35,45)을 만들지만, nearest(기본)는
+    # 셀마다 한 카메라 색만 써서 중간색이 절대 없어야 한다.
+    spec = BevSpec(); cam = _pinhole()
+    A = (10, 20, 30); B = (40, 50, 60); MID = (25, 35, 45)
+    imgs = {"front": np.full((720, 1280, 3), A, np.uint8),
+            "left": np.full((720, 1280, 3), B, np.uint8)}
+    cams = {"front": cam, "left": cam}
+    tcf = {"front": _T_CAM_LIDAR, "left": _T_CAM_LIDAR}
+    names = ("front", "left")
+
+    avg = ipm_canvas(imgs, cams, tcf, np.eye(4), 0.87, spec, use_names=names, blend="average")
+    assert (avg == MID).all(axis=2).any()              # 평균은 중간색이 존재
+
+    near = ipm_canvas(imgs, cams, tcf, np.eye(4), 0.87, spec, use_names=names, blend="nearest")
+    filled = near[(near > 0).any(axis=2)]
+    is_A = (filled == A).all(axis=1)
+    is_B = (filled == B).all(axis=1)
+    assert (is_A | is_B).all()                         # 채워진 셀은 모두 순수 A 또는 B
+    assert not (near == MID).all(axis=2).any()         # 중간색 없음

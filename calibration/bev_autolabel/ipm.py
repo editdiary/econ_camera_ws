@@ -59,20 +59,54 @@ def ipm_project_rgb(img, cam, T_cam_lidar, cam_height, spec):
     return sumbgr, cnt
 
 
+def _cell_bgr(sumbgr, cnt):
+    out = np.zeros((sumbgr.shape[0], sumbgr.shape[1], 3), np.uint8)
+    m = cnt > 0
+    out[m] = (sumbgr[m] / cnt[m, None]).astype(np.uint8)
+    return out
+
+
 def ipm_canvas(imgs, cams_by_name, T_cam_front, T_front_lidar, cam_height, spec,
-               use_names=USE):
-    """여러 카메라 IPM 투영을 누적·평균 → BEV RGB 캔버스(NX,NY,3 BGR uint8). 빈 셀=0."""
-    sumbgr = np.zeros((spec.NX, spec.NY, 3), np.float64)
-    cnt = np.zeros((spec.NX, spec.NY), np.int64)
+               use_names=USE, blend="nearest"):
+    """여러 카메라 IPM 투영을 합성 → BEV RGB 캔버스(NX,NY,3 BGR uint8). 빈 셀=0.
+
+    blend="nearest"(기본): 셀마다 그 지면점에 가장 가까운 카메라 1대의 색만 채택.
+      off-plane 물체의 카메라 간 겹침 유령상(ghosting)이 줄어 텍스처가 선명하다.
+    blend="average": 겹치는 카메라 색을 평균. 이음새가 부드럽지만 겹침이 뿌옇다.
+    """
+    per = []                                           # (sumbgr, cnt, center_ego)
     for name in use_names:
         im = imgs.get(name)
         if im is None:
             continue
         T_cam_lidar = T_cam_front[name] @ T_front_lidar
         s, c = ipm_project_rgb(im, cams_by_name[name], T_cam_lidar, cam_height, spec)
-        sumbgr += s
-        cnt += c
+        per.append((s, c, se3_inv(T_cam_lidar)[:3, 3]))
+    if not per:
+        return np.zeros((spec.NX, spec.NY, 3), np.uint8)
+
+    if blend == "average":
+        sumbgr = sum(p[0] for p in per)
+        cnt = sum(p[1] for p in per)
+        return _cell_bgr(sumbgr, cnt)
+    if blend != "nearest":
+        raise ValueError(f"unknown blend: {blend!r} (average|nearest)")
+
+    # nearest: 셀 지면점(X,Y)과 각 카메라 중심의 거리 최소인 카메라 채택(자기 평면
+    # 기준 수직성분은 cam_height 로 동일 → 사실상 수평거리 비교). 커버리지 없는 셀은 후보 제외.
+    rr, cc = np.mgrid[0:spec.NX, 0:spec.NY]
+    X = spec.XF - rr * spec.RES
+    Y = spec.YH - cc * spec.RES
+    dstack = np.full((len(per), spec.NX, spec.NY), np.inf)
+    cols = []
+    for i, (s, c, C) in enumerate(per):
+        d = np.sqrt((X - C[0]) ** 2 + (Y - C[1]) ** 2 + cam_height ** 2)
+        dstack[i] = np.where(c > 0, d, np.inf)
+        cols.append(_cell_bgr(s, c))
+    best = np.argmin(dstack, 0)
+    has = np.isfinite(dstack).any(0)
     out = np.zeros((spec.NX, spec.NY, 3), np.uint8)
-    m = cnt > 0
-    out[m] = (sumbgr[m] / cnt[m, None]).astype(np.uint8)
+    for i in range(len(per)):
+        sel = has & (best == i)
+        out[sel] = cols[i][sel]
     return out

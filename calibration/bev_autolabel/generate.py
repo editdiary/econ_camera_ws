@@ -61,6 +61,8 @@ def main():
     ap.add_argument("--cam-height", type=float, default=0.87,
                     help="IPM 지면 평면용 카메라 렌즈의 바닥 위 높이[m] 실측값")
     ap.add_argument("--alpha", type=float, default=0.45, help="review 라벨 오버레이 불투명도")
+    ap.add_argument("--blend", choices=("nearest", "average"), default="nearest",
+                    help="IPM 다중카메라 합성: nearest(셀별 최근접 1대, 기본)|average(평균)")
     a = ap.parse_args()
 
     spec = BevSpec()
@@ -90,7 +92,7 @@ def main():
             print(f"skip (missing image) frame_idx={idx}")
             continue
         canvas = ipm.ipm_canvas(imgs, rig.cams_by_name, rig.T_cam_front, T_front_lidar,
-                                a.cam_height, spec, use_names=USE)
+                                a.cam_height, spec, use_names=USE, blend=a.blend)
         sd = out / f"sample_{n:06d}"
         sd.mkdir(exist_ok=True)
         save_label_png(sd / "label.png", lab)
@@ -109,7 +111,8 @@ def main():
             "cameras": list(USE),
             "calib": str(pathlib.Path(a.calib).resolve()),
             "orient": str(pathlib.Path(a.orient).resolve()),
-            "params": {"z_gate": a.z_gate, "kf_step": a.kf_step, "cam_height": a.cam_height},
+            "params": {"z_gate": a.z_gate, "kf_step": a.kf_step, "cam_height": a.cam_height,
+                       "blend": a.blend},
         }
         (sd / "meta.json").write_text(json.dumps(meta, indent=2))
         rows.append({"sample": f"sample_{n:06d}", "frame_idx": idx, "stamp_ns": t_ns})

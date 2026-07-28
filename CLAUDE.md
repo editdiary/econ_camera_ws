@@ -38,7 +38,8 @@
   corridor 무조건 drivable). 단계1 `verify_labels.py`(검수 PNG) + 단계2 `generate.py`(LiDAR 라벨 **+ 3어안 IPM
   지면투영 RGB 캔버스 + 라벨 오버레이 검수뷰** 일괄 생성, `ipm.py`). LiDAR가 바닥을 못 보므로 바닥 모습은 IPM으로 보완.
   **사람은 카메라 마스킹 없이 IPM 배경 위 라벨을 BEV에서 보정만** 함 → 옛 마스킹 경로(`ipm_review`·`dataset_flatten`) 폐기.
-  raws3 + 타 bag 4종 검증. 실행법·변경사항은 `docs/BEV_AUTOLABEL.md §A`. 순수 테스트 24개.
+  raws3 + 타 bag 4종 검증. 실행법·변경사항은 `docs/BEV_AUTOLABEL.md §A`. 순수 테스트 25개.
+  IPM 다중카메라 합성은 기본 `nearest`(셀별 최근접 1대, 겹침 유령상 감소)·`--blend average` 선택 가능.
 - 순수 로직 테스트 18개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
   한 곳으로 모은다. 하위 구조:

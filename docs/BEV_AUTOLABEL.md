@@ -31,11 +31,11 @@
 - 파이프라인 CLI 구현 완료: **`calibration/bev_autolabel/`**
   - `bev_label.py`(순수 라벨 로직), `bev_io.py`(맵·stamp·이미지 IO), `ipm.py`(**이미지→지면 IPM RGB 투영**),
     `render.py`(색칠·미터축 검수뷰·IPM 오버레이뷰), `verify_labels.py`(**단계1** 검증 CLI),
-    `generate.py`(**단계2** 데이터셋+IPM CLI), `test_bev_label.py`·`test_ipm.py`(24 테스트).
+    `generate.py`(**단계2** 데이터셋+IPM CLI), `test_bev_label.py`·`test_ipm.py`(25 테스트).
   - 재사용: `calibration/cam_lidar/{chain,cloud_io,calib_io}.py`, `calibration/verify/ds_model.py`.
 - **폐기(2026-07-28)**: 카메라-마스킹 경로 `ipm_review.py`(마스크 IPM+융합)·`dataset_flatten.py`(export/gather-cvat).
   마스크를 사람이 카메라에 그리는 대신 `generate.py`가 IPM 배경+라벨을 미리 얹어 주므로 불필요해짐(§A.6).
-- 검증: raws3 16프레임 + 타 bag 4종(raws1/raws2/rawos2/rawos4, with/without-sun) 일관 확인. 순수 로직 테스트 24+18+7 pass.
+- 검증: raws3 16프레임 + 타 bag 4종(raws1/raws2/rawos2/rawos4, with/without-sun) 일관 확인. 순수 로직 테스트 25+18+7 pass.
 
 ### A.1 PoC(§6) 대비 최종 변경사항 — **§6·§8보다 이 표가 최신**
 | 항목 | PoC 서술(§6) | 최종 구현 |
@@ -86,14 +86,16 @@ python3 generate.py \
   --cam-height 0.87    # IPM 지면 평면용 카메라 렌즈 높이[m] 실측(마스트 LiDAR가 바닥을 못 봐 자로 측정)
   # --z-gate 0.3       # obstacle 바닥근접 여유(기본 0.3; 0.15면 통로 더 개방)
   # --alpha 0.45       # review 라벨 오버레이 불투명도
+  # --blend nearest    # IPM 다중카메라 합성: nearest(기본, 셀별 최근접 1대) | average(평균)
   # --limit 3          # 스모크: 앞 N개만
 ```
 → `<출력>/sample_NNNNNN/` 마다:
 - **`label.png`** — 순수 class(0/1/2) **인덱스 팔레트**(오버레이 없음) = **재라벨링 원본**(사람이 이걸 보정).
 - **`ipm_rgb.png`** — 3어안을 지면 평면에 IPM 투영한 **80×80 BEV RGB 캔버스**(위에서 본 주행면). 라벨 보정 배경.
+  다중카메라 합성은 기본 `nearest`(셀별 최근접 카메라 1대 → 겹침 유령상 감소·텍스처 선명), `--blend average`로 평균 전환 가능.
 - **`review.png`** — 상단 원본 3어안(좌·전·우) + 하단 `ipm_rgb`에 라벨 반투명 오버레이(미터축·격자·ego). 검수·보정 기준뷰.
 - **`cam_{front,left,right}.jpg`** — 원본 3이미지.
-- **`meta.json`** — pose(`world_T_body`)·stamp·BEV 규격·사용 파라미터(z_gate·kf_step·cam_height).
+- **`meta.json`** — pose(`world_T_body`)·stamp·BEV 규격·사용 파라미터(z_gate·kf_step·cam_height·blend).
 - 그리고 최상위 **`dataset.csv`**(sample↔frame_idx↔stamp). 이미지 결손 키프레임은 건너뛰고 번호는 연속 유지.
 
 ### A.5 파라미터 조정
