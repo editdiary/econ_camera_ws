@@ -108,6 +108,15 @@ python3 generate.py \
   python3 dataset_flatten.py gather --flat-masks <flat_masks> --out ../../data/bev/annotations/temp_raws1
   ```
   gather는 파일명에 `sample_NNNNNN__cam_<name>` 만 있으면 툴이 접미사를 붙여도 인식, 마스크는 >0 을 drivable로 이진화.
+- **CVAT 연동**: CVAT는 마스크를 0/1 이진이 아니라 "Segmentation mask 1.1"(클래스별 RGB 컬러 + `labelmap.txt`)로 내보낸다.
+  색은 프로젝트 설정마다 달라지므로 `gather`(>0 이진화) 대신 `gather-cvat` 로 labelmap의 클래스 색을 정확히 매칭한다:
+  ```bash
+  # CVAT 내보내기: "Segmentation mask 1.1" (labelmap.txt + SegmentationClass/ 포함)
+  python3 dataset_flatten.py gather-cvat \
+    --cvat-dir ../../data/bev/annotations/temp_raws1/cvat_label \
+    --out      ../../data/bev/annotations/temp_raws1        # --class 기본 drivable
+  ```
+  `SegmentationClass/*.png` 에서 labelmap의 `drivable` 색과 일치하는 픽셀만 255로 만들어 `sample_NNNNNN/cam_{name}.png` 생성(다른 클래스 오염 없음).
 ```bash
 cd calibration/bev_autolabel
 python3 ipm_review.py \

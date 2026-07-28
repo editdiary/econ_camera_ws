@@ -12,7 +12,29 @@ from bev_label import BevSpec                       # noqa: E402
 from ds_model import DoubleSphereCamera             # noqa: E402
 from chain import project                            # noqa: E402
 from ipm_review import ipm_project_mask, fuse_labels, _cell_dist  # noqa: E402
-from dataset_flatten import parse_sample_cam                       # noqa: E402
+from dataset_flatten import (parse_sample_cam, parse_labelmap,      # noqa: E402
+                             color_to_binary)
+
+
+def test_parse_labelmap(tmp_path):
+    p = tmp_path / "labelmap.txt"
+    p.write_text("# label:color_rgb:parts:actions\n"
+                 "background:0,0,0::\n"
+                 "drivable:36,179,83::\n"
+                 "unknown:41,38,5::\n")
+    lm = parse_labelmap(str(p))
+    assert lm["drivable"] == (36, 179, 83)
+    assert lm["background"] == (0, 0, 0)
+    assert "unknown" in lm
+
+
+def test_color_to_binary_matches_only_target_color():
+    img = np.zeros((4, 4, 3), np.uint8)                # BGR
+    img[0, 0] = (83, 179, 36)                          # drivable RGB(36,179,83) -> BGR
+    img[1, 1] = (5, 38, 41)                            # unknown  RGB(41,38,5)  -> BGR
+    m = color_to_binary(img, (36, 179, 83))
+    assert m[0, 0] == 255 and m[1, 1] == 0             # drivable만 255, unknown 제외
+    assert m.sum() == 255                              # 정확히 1픽셀
 
 
 def test_parse_sample_cam():
