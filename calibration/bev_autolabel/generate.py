@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """단계2: bag의 LIO 맵 + 추출 이미지 → BEV auto-label 데이터셋 일괄 생성.
 
-샘플: sample_NNNNNN/{label.png(인덱스 팔레트 0/1/2), review.png, cam_{front,left,right}.jpg, meta.json}
-      + dataset.csv
+각 키프레임마다 (1) LiDAR+맵 기하로 auto-label(0/1/2) 을 만들고, (2) 3어안을 지면 평면에
+IPM 투영해 BEV RGB 캔버스를 만든 뒤, (3) 캔버스 위에 라벨을 얹은 검수뷰를 낸다. 사람은
+카메라 이미지에 마스크를 그리는 대신, 이 BEV 뷰에서 미리 채워진 라벨을 보정만 하면 된다.
+
+샘플: sample_NNNNNN/{label.png(인덱스 팔레트 0/1/2), ipm_rgb.png(BEV RGB 캔버스),
+      review.png(캔버스+라벨 오버레이+원본 3어안), cam_{front,left,right}.jpg, meta.json} + dataset.csv
 
 사용:
   cd calibration/bev_autolabel
@@ -11,7 +15,7 @@
     --extract-dir ../../data/cam_out/extracted \
     --calib ../../data/calib_260723/calib.yaml \
     --orient ../../data/calib_260723/orientation.json \
-    --out ../../data/bev_dataset/raws3 --kf-step 0.4
+    --out ../../data/bev/dataset/raws3 --kf-step 0.4 --cam-height 0.87
 """
 import argparse
 import csv
@@ -31,6 +35,7 @@ from cloud_io import pose_at             # noqa: E402
 from ds_model import load_rig            # noqa: E402
 import bev_io                            # noqa: E402
 import render                            # noqa: E402
+import ipm                               # noqa: E402
 from bev_label import BevSpec, build_label, compute_self_voxels, select_keyframes  # noqa: E402
 
 USE = ("front", "left", "right")
@@ -53,6 +58,9 @@ def main():
     ap.add_argument("--kf-step", type=float, default=0.4)
     ap.add_argument("--limit", type=int, default=0, help="테스트용 최대 샘플 수(0=전체)")
     ap.add_argument("--z-gate", type=float, default=0.3)
+    ap.add_argument("--cam-height", type=float, default=0.87,
+                    help="IPM 지면 평면용 카메라 렌즈의 바닥 위 높이[m] 실측값")
+    ap.add_argument("--alpha", type=float, default=0.45, help="review 라벨 오버레이 불투명도")
     a = ap.parse_args()
 
     spec = BevSpec()
@@ -81,10 +89,14 @@ def main():
         if any(imgs[name] is None for name in USE):
             print(f"skip (missing image) frame_idx={idx}")
             continue
+        canvas = ipm.ipm_canvas(imgs, rig.cams_by_name, rig.T_cam_front, T_front_lidar,
+                                a.cam_height, spec, use_names=USE)
         sd = out / f"sample_{n:06d}"
         sd.mkdir(exist_ok=True)
         save_label_png(sd / "label.png", lab)
-        cv2.imwrite(str(sd / "review.png"), render.review_image(lab, spec, imgs))
+        cv2.imwrite(str(sd / "ipm_rgb.png"), canvas)
+        cv2.imwrite(str(sd / "review.png"),
+                    render.review_overlay(canvas, lab, imgs, spec, alpha=a.alpha))
         for name in USE:
             cv2.imwrite(str(sd / f"cam_{name}.jpg"), imgs[name])
         T_wb = pose_at(times, poses, t_ns)
@@ -97,7 +109,7 @@ def main():
             "cameras": list(USE),
             "calib": str(pathlib.Path(a.calib).resolve()),
             "orient": str(pathlib.Path(a.orient).resolve()),
-            "params": {"z_gate": a.z_gate, "kf_step": a.kf_step},
+            "params": {"z_gate": a.z_gate, "kf_step": a.kf_step, "cam_height": a.cam_height},
         }
         (sd / "meta.json").write_text(json.dumps(meta, indent=2))
         rows.append({"sample": f"sample_{n:06d}", "frame_idx": idx, "stamp_ns": t_ns})

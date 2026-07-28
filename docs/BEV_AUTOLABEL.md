@@ -14,22 +14,28 @@
 
 - **입력**: ① 카메라4+LiDAR가 함께 녹화된 bag(`record_all.launch.py` 산출), ② 그 bag을 Point-LIO로 매핑한 폴더
   (`map.pcd` + `trajectory.tum`), ③ 캘리브(`calib.yaml` + `orientation.json`).
-- **출력(1 샘플)**: `{3장 이미지(front/left/right), BEV 라벨(80×80), ignore 마스크, calib, ego-pose}`.
+- **출력(1 샘플)**: `{3장 이미지(front/left/right), BEV 라벨(80×80), IPM RGB 캔버스(80×80, 위에서 본 주행면),
+  검수 오버레이뷰, calib, ego-pose}`.
 - **라벨 3-클래스**: `0=obstacle(주행불가)`, `1=drivable(주행가능)`, `2=ignore(가려짐/미관측, 학습 제외)`.
 - **핵심 아이디어**: LiDAR는 **바닥을 못 보고 장애물(수직 구조)만 잘 본다**. 그래서
-  **"장애물 footprint = obstacle, 그 외 보이는 곳 = drivable, 가려진 곳 = ignore"** 로 정의한다.
-- **사람 검수**: auto-label은 초안이다. 이후 사람이 BEV 위에서 검수·보정해 최종 데이터셋을 만든다.
+  **"장애물 footprint = obstacle, 그 외 보이는 곳 = drivable, 가려진 곳 = ignore"** 로 라벨을 정의한다.
+  **바닥 자체는 LiDAR에 안 찍히므로**, 카메라를 지면 평면에 **IPM 투영**해 BEV 배경(위에서 본 주행면 모습)을 만든다.
+- **사람 검수**: auto-label(라벨)은 초안이다. 사람은 **카메라에 마스크를 그리지 않고**, IPM 배경 위에 미리 얹힌
+  라벨을 **BEV 위에서 보정만** 하면 된다(주로 drivable을 실제 통로 경계까지 확장). → 마스킹 annotation 단계 불필요.
 
 ---
 
 ## A. 실행 가이드 (CLI) & 구현 상태 — **먼저 읽기**
 
-### A.0 구현 상태 (2026-07-27)
+### A.0 구현 상태 (2026-07-28)
 - 파이프라인 CLI 구현 완료: **`calibration/bev_autolabel/`**
-  - `bev_label.py`(순수 라벨 로직), `bev_io.py`(맵·stamp·이미지 IO), `render.py`(색칠·미터축 검수뷰),
-    `verify_labels.py`(**단계1** 검증 CLI), `generate.py`(**단계2** 데이터셋 CLI), `test_bev_label.py`(21 테스트).
+  - `bev_label.py`(순수 라벨 로직), `bev_io.py`(맵·stamp·이미지 IO), `ipm.py`(**이미지→지면 IPM RGB 투영**),
+    `render.py`(색칠·미터축 검수뷰·IPM 오버레이뷰), `verify_labels.py`(**단계1** 검증 CLI),
+    `generate.py`(**단계2** 데이터셋+IPM CLI), `test_bev_label.py`·`test_ipm.py`(24 테스트).
   - 재사용: `calibration/cam_lidar/{chain,cloud_io,calib_io}.py`, `calibration/verify/ds_model.py`.
-- 검증: raws3 16프레임 + 타 bag 4종(raws1/raws2/rawos2/rawos4, with/without-sun) 일관 확인. 순수 로직 테스트 21+18+7 pass.
+- **폐기(2026-07-28)**: 카메라-마스킹 경로 `ipm_review.py`(마스크 IPM+융합)·`dataset_flatten.py`(export/gather-cvat).
+  마스크를 사람이 카메라에 그리는 대신 `generate.py`가 IPM 배경+라벨을 미리 얹어 주므로 불필요해짐(§A.6).
+- 검증: raws3 16프레임 + 타 bag 4종(raws1/raws2/rawos2/rawos4, with/without-sun) 일관 확인. 순수 로직 테스트 24+18+7 pass.
 
 ### A.1 PoC(§6) 대비 최종 변경사항 — **§6·§8보다 이 표가 최신**
 | 항목 | PoC 서술(§6) | 최종 구현 |
@@ -77,59 +83,38 @@ python3 generate.py \
   --orient      ../../data/calib_260723/orientation.json \
   --out         ../../data/bev/dataset/raws3 \
   --kf-step 0.4        # 키프레임 이동거리 간격(m)
+  --cam-height 0.87    # IPM 지면 평면용 카메라 렌즈 높이[m] 실측(마스트 LiDAR가 바닥을 못 봐 자로 측정)
   # --z-gate 0.3       # obstacle 바닥근접 여유(기본 0.3; 0.15면 통로 더 개방)
+  # --alpha 0.45       # review 라벨 오버레이 불투명도
   # --limit 3          # 스모크: 앞 N개만
 ```
 → `<출력>/sample_NNNNNN/` 마다:
-- **`label.png`** — 순수 class(0/1/2) **인덱스 팔레트**(오버레이 없음) = **재라벨링 원본**.
-- **`review.png`** — ego 40×40 박스·미터축 검수뷰(사람 검수용).
+- **`label.png`** — 순수 class(0/1/2) **인덱스 팔레트**(오버레이 없음) = **재라벨링 원본**(사람이 이걸 보정).
+- **`ipm_rgb.png`** — 3어안을 지면 평면에 IPM 투영한 **80×80 BEV RGB 캔버스**(위에서 본 주행면). 라벨 보정 배경.
+- **`review.png`** — 상단 원본 3어안(좌·전·우) + 하단 `ipm_rgb`에 라벨 반투명 오버레이(미터축·격자·ego). 검수·보정 기준뷰.
 - **`cam_{front,left,right}.jpg`** — 원본 3이미지.
-- **`meta.json`** — pose(`world_T_body`)·stamp·BEV 규격·사용 파라미터(z_gate·kf_step).
+- **`meta.json`** — pose(`world_T_body`)·stamp·BEV 규격·사용 파라미터(z_gate·kf_step·cam_height).
 - 그리고 최상위 **`dataset.csv`**(sample↔frame_idx↔stamp). 이미지 결손 키프레임은 건너뛰고 번호는 연속 유지.
 
 ### A.5 파라미터 조정
 `--z-gate`(obstacle 바닥근접 여유)만 실질적 레버다. 0.6은 통로 위 캐노피 오검(비추), 0.15는 통로 개방, 0.3 절충(기본).
 `min_pts`·`min_extent`는 이 환경에선 무효. BEV 범위·해상도(XF/XR/YH/RES)는 `bev_label.BevSpec` 기본값 고정.
 
-### A.6 단계3 — 이미지 마스크 IPM 투영 + LiDAR 융합 검수 (선택; 더 정확한 라벨용)
-`generate.py`로 만든 **데이터셋(sample) 위에서** 동작한다(`ipm_review.py`). 사람이 각 sample 의
-`cam_{front,left,right}.jpg`에 그린 drivable 마스크를 **바닥 평면(z=−H)** 에 역투영(IPM)해 BEV로 올리고,
-그 sample 의 `meta.json`(stamp·z_gate·calib)으로 **LiDAR 라벨을 재구성**해 겹쳐 본다.
-- **왜 H(카메라 바닥 위 높이)가 필요**: 마스트 LiDAR는 바닥을 못 봐 H를 못 준다 → **자로 실측**(예: 렌즈 0.87m). `--cam-height`.
-- **마스크 레이아웃**(데이터셋 sample 구조 미러링): `<mask-dir>/sample_NNNNNN/cam_{front,left,right}.png`(흰=drivable).
-  마스크 있는 sample 만 처리(부분 라벨 OK). calib·orient·z_gate 는 sample `meta.json` 에서 자동으로 읽음(플래그로 덮어쓰기 가능).
-- **annotation tool 연동(파일명 충돌 해결)**: sample마다 `cam_front/left/right` 이름이 겹쳐 한 폴더에 못 모은다.
-  `dataset_flatten.py`로 펼치고(export) 되돌린다(gather):
-  ```bash
-  # 1) 펼치기(업로드용): <flat>/sample_NNNNNN__cam_{name}.jpg (이름 유일)
-  python3 dataset_flatten.py export --dataset-dir ../../data/bev/dataset/temp_raws1 --out <flat_imgs>
-  # 2) annotation tool에서 마스크 작업 → export
-  # 3) 되돌리기: 마스크 → annotations/<bag>/sample_NNNNNN/cam_{name}.png
-  python3 dataset_flatten.py gather --flat-masks <flat_masks> --out ../../data/bev/annotations/temp_raws1
-  ```
-  gather는 파일명에 `sample_NNNNNN__cam_<name>` 만 있으면 툴이 접미사를 붙여도 인식, 마스크는 >0 을 drivable로 이진화.
-- **CVAT 연동**: CVAT는 마스크를 0/1 이진이 아니라 "Segmentation mask 1.1"(클래스별 RGB 컬러 + `labelmap.txt`)로 내보낸다.
-  색은 프로젝트 설정마다 달라지므로 `gather`(>0 이진화) 대신 `gather-cvat` 로 labelmap의 클래스 색을 정확히 매칭한다:
-  ```bash
-  # CVAT 내보내기: "Segmentation mask 1.1" (labelmap.txt + SegmentationClass/ 포함)
-  python3 dataset_flatten.py gather-cvat \
-    --cvat-dir ../../data/bev/annotations/temp_raws1/cvat_label \
-    --out      ../../data/bev/annotations/temp_raws1        # --class 기본 drivable
-  ```
-  `SegmentationClass/*.png` 에서 labelmap의 `drivable` 색과 일치하는 픽셀만 255로 만들어 `sample_NNNNNN/cam_{name}.png` 생성(다른 클래스 오염 없음).
-```bash
-cd calibration/bev_autolabel
-python3 ipm_review.py \
-  --dataset-dir ../../data/bev/dataset/raws1 \
-  --map-dir     ../../data/sj_bags/260722/maps/raws1_mapping \
-  --mask-dir    ../../data/bev/annotations/raws1 \
-  --cam-height  0.87        # --near 2.0(하늘 후보 승격 반경), --out(미지정 시 각 sample 폴더에 기록)
-```
-→ 각 `sample_NNNNNN/` 안에 추가: `review_combined.png`(상단 3이미지+하단 LiDAR/IPM/융합 3-패널; 격자·범례 포함),
-`label_fused.png`(**장식 없는 80×80 다색 카테고리 맵** — 겹침/불일치를 색으로 구분, **label tool에 바로 로드**; 색 의미는 review_combined 범례),
-`meta_review.json`(카테고리 셀 수). (LiDAR-only 0/1/2 는 generate 산출 `label.png` 그대로 사용.)
-- **검수뷰 색**: 밝은초록=둘 다 drivable / 빨강=LiDAR 장애물 / **주황=이미지바닥∩LiDAR장애물(→obstacle 채택, "잎 밑 바닥" 함정)** / 하늘=이미지 후보바닥(근거리 승격·원거리 ignore) / 어두운초록=LiDAR만 drivable / 회색=미확정.
-- **한계**: IPM은 평면 가정이라 원거리·측면 부정확·수직물체 번짐, LiDAR는 국소 drift 가능 — **둘 다 100% 아님 → 사람이 최종 판단**. 일치 셀은 자동 확정, 불일치만 검수.
+### A.6 단계3 — 사람 검수·보정 (BEV 위에서 라벨 수정)
+`generate.py`가 이미 **IPM 배경(`ipm_rgb.png`) + LiDAR auto-label(`label.png`)** 을 만들어 `review.png`로 겹쳐
+보여주므로, **별도의 카메라 마스킹·IPM 투영 단계가 없다.** 사람은 다음만 하면 된다:
+
+1. `review.png`(상단 3어안 + 하단 IPM 캔버스+라벨 오버레이)를 보고 각 sample 을 판단.
+2. **`label.png`(80×80 인덱스 0/1/2)를 BEV 세그멘테이션 툴에 로드해 직접 보정.** 배경으로 `ipm_rgb.png`(위에서 본
+   실제 주행면)를 깔면 통로 경계가 보인다. 보정된 `label.png` 가 **최종 정답**이다.
+
+- **주된 보정 패턴**: auto-label 의 drivable(초록)은 궤적 corridor 기반이라 **실제 통로보다 약간 좁다** →
+  초록을 좌우 장애물(빨강) 경계까지 넓히는 것이 대부분. 나머지는 대체로 맞음.
+- **왜 IPM 배경으로 충분한가**: 통로는 평면이라 IPM 번짐이 없어 **바닥이 정확히 펴진다**(작물 등 수직물만 방사상 번짐).
+  마스트 LiDAR가 바닥을 못 보는 사각을 카메라 IPM이 메워, "위에서 본 주행면"을 근사한다(`--cam-height` 실측 필요).
+- **한계**: IPM은 평면 가정이라 수직물체 번짐·원거리 부정확, LiDAR auto-label 은 국소 drift 가능 — **둘 다 100% 아님**.
+  그래서 이 단계(사람 보정)가 최종 정답을 만든다. auto-label 은 노동을 줄이는 초안일 뿐이다.
+- 폐기된 마스킹 경로(`ipm_review.py`·`dataset_flatten.py`, CVAT 카메라 마스크 왕복)는 더 이상 쓰지 않는다(§A.0).
 
 ---
 
@@ -340,14 +325,16 @@ python3 ipm_review.py \
 
 ---
 
-## 10. 구현 완료 (2026-07-27) & 향후
+## 10. 구현 완료 (2026-07-28) & 향후
 
-- CLI 구현 완료: **`calibration/bev_autolabel/`** (실행법 §A). 단계1 `verify_labels.py` + 단계2 `generate.py`.
-- 출력 규칙 확정: 샘플당 `label.png`(class 인덱스 팔레트) + `review.png`(검수뷰) + `cam_{front,left,right}.jpg` +
-  `meta.json`, 최상위 `dataset.csv`. 키프레임 = 이동거리 0.4m 간격.
-- 의존 모듈(`calibration/cam_lidar`, `calibration/verify`)은 이 브랜치(`feat/bev-autolabel`)에 포함됨.
+- CLI 구현 완료: **`calibration/bev_autolabel/`** (실행법 §A). 단계1 `verify_labels.py` + 단계2 `generate.py`(라벨+IPM 통합).
+- 출력 규칙 확정: 샘플당 `label.png`(class 인덱스 팔레트) + `ipm_rgb.png`(IPM RGB 캔버스) + `review.png`(검수 오버레이뷰,
+  원본 3어안 포함) + `cam_{front,left,right}.jpg` + `meta.json`, 최상위 `dataset.csv`. 키프레임 = 이동거리 0.4m 간격.
+- **워크플로우 전환(2026-07-28)**: 카메라 마스킹 경로(`ipm_review`·`dataset_flatten`) 폐기. 사람은 IPM 배경 위 라벨을
+  BEV에서 보정만(§A.6). 마스킹 annotation·flatten/gather 불필요.
+- 의존 모듈(`calibration/cam_lidar`, `calibration/verify`)은 브랜치에 포함됨.
 - **향후**: ①여러 bag/환경 확충(일반화) ②전방 동적물체(§7-E) 처리 ③어안→모델입력 언디스토션(§7-H)
-  ④사람 검수·재라벨링 툴로 최종 데이터셋 확정.
+  ④BEV 라벨 보정 툴로 최종 데이터셋 확정.
 
 ---
 

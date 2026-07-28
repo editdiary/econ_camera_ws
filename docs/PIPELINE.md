@@ -21,10 +21,8 @@
   2. 데이터 수집        record_all → rosbag2_*/           (+QC: check_recording/check_lidar_bag)
   3. 이미지 추출        bag_extract → frame_*/cam{0..3}.jpg + sets.csv
   4. LIO 매핑          lio_map_bag → map.pcd + trajectory.tum   (+궤적 건강성 확인)
-  5. LiDAR auto-label  generate.py → dataset/sample_*/{label,review,cam_*,meta}
-  6. 자체 annotation   export → CVAT(drivable 마스크) → gather-cvat → annotations/*/sample_*/cam_*.png
-  7. IPM 융합 검수      ipm_review.py → sample_*/{review_combined, label_fused, meta_review}
-  8. 최종 확정          사람이 label tool로 검수·재라벨 → 최종 BEV 데이터셋
+  5. auto-label(라벨+IPM) generate.py → dataset/sample_*/{label,ipm_rgb,review,cam_*,meta}
+  6. 최종 확정            사람이 BEV에서 label.png 보정(IPM 배경 위) → 최종 BEV 데이터셋
 ```
 
 | 단계 | 실행(대표) | 결과물 | 상세 문서 |
@@ -35,17 +33,15 @@
 | 2. 수집 | `record_all.launch.py` | `rosbag2_*/`(mcap) | [USAGE §3·§9](USAGE.md), [LIDAR §3](LIDAR.md) |
 | 3. 추출 | `bag_extract` | `frame_*/cam{0..3}.jpg` + `sets.csv` | [USAGE §6](USAGE.md) |
 | 4. 매핑 | `lio_map_bag.sh` | `map.pcd` + `trajectory.tum` | [MAPPING.md](MAPPING.md) |
-| 5. LiDAR 라벨 | `generate.py` | `sample_*/{label.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §A.4](BEV_AUTOLABEL.md) |
-| 6. annotation | `dataset_flatten` + CVAT | `annotations/*/sample_*/cam_*.png` | [BEV_AUTOLABEL §A.6](BEV_AUTOLABEL.md) |
-| 7. IPM 융합 | `ipm_review.py` | `sample_*/{review_combined.png,label_fused.png}` | [BEV_AUTOLABEL §A.6](BEV_AUTOLABEL.md) |
-| 8. 최종 확정 | (label tool) | 최종 데이터셋 | [BEV_AUTOLABEL §10](BEV_AUTOLABEL.md) |
+| 5. auto-label(라벨+IPM) | `generate.py` | `sample_*/{label.png,ipm_rgb.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §A.4](BEV_AUTOLABEL.md) |
+| 6. 최종 확정 | (BEV label tool) | 최종 데이터셋(사람 보정) | [BEV_AUTOLABEL §A.6·§10](BEV_AUTOLABEL.md) |
 
 > **주기 구분**: 1a·1b(캘리브)는 **리그(카메라·라이다 장착)를 바꾸지 않는 한 1회**만 하고 이후
-> 모든 bag이 그 `calib.yaml`을 공유한다. 2~8은 **수집한 bag마다** 반복한다.
+> 모든 bag이 그 `calib.yaml`을 공유한다. 2~6은 **수집한 bag마다** 반복한다.
 >
 > **폴더 규약**: 모든 산출물은 `data/`(gitignore) 아래로 모은다. bag별 3쌍을 같은 `<name>`으로 맞춘다 —
 > `data/sj_bags/<날짜>/bags/<bag>` ↔ `.../maps/<name>_mapping`(매핑 산출) ↔ `data/extracted/<name>`(추출 이미지).
-> `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun. BEV 산출은 `data/bev/{dataset,review,annotations}/<name>`.
+> `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun. BEV 산출은 `data/bev/{dataset,review}/<name>`.
 
 ---
 
@@ -229,9 +225,10 @@ colcon build --packages-select point_lio && source install/setup.bash   # 최초
 
 ## 5단계. LiDAR auto-label 데이터셋 생성
 
-**무엇**: 맵+궤적+calib으로 **LiDAR 기반 BEV 라벨(0/1/2)** 초안을 키프레임마다 자동 생성한다.
+**무엇**: 맵+궤적+calib으로 **LiDAR 기반 BEV 라벨(0/1/2)** 초안을 키프레임마다 자동 생성하고,
+**동시에 3어안을 지면 평면에 IPM 투영해 BEV RGB 캔버스**(위에서 본 주행면)를 만들어 라벨을 얹은 검수뷰까지 낸다.
 핵심 아이디어 = "장애물(수직 구조)=obstacle, 보이는 그 외=drivable, 가려짐=ignore"
-(LiDAR는 바닥을 못 보고 장애물만 잘 봄).
+(LiDAR는 바닥을 못 보고 장애물만 잘 봄 → 바닥 모습은 IPM으로 보완).
 
 ```bash
 cd calibration/bev_autolabel
@@ -249,89 +246,40 @@ python3 generate.py \
   --map-dir ../../data/sj_bags/<날짜>/maps/<name>_mapping \
   --extract-dir ../../data/extracted/<name> \
   --calib ../../data/calib_260723/calib.yaml --orient ../../data/calib_260723/orientation.json \
-  --out ../../data/bev/dataset/<name> --kf-step 0.4
+  --out ../../data/bev/dataset/<name> --kf-step 0.4 --cam-height 0.87
 ```
 
 **주요 옵션**:
 - `--kf-step 0.4`: 키프레임 이동거리 간격(m).
+- `--cam-height 0.87`: IPM 지면 평면용 카메라 렌즈 높이(m). 마스트 LiDAR가 바닥을 못 봐 못 주므로 **자로 실측**. IPM 정확도의 핵심.
 - `--z-gate 0.3`: obstacle 바닥근접 여유(**유일한 실질 레버**; 0.15면 통로 더 개방, 0.6은 캐노피 오검).
-- `--limit N`: 스모크(앞 N개만).
+- `--alpha 0.45`: review 라벨 오버레이 불투명도. `--limit N`: 스모크(앞 N개만).
 - `T_front_lidar` 키가 없으면 CLI가 즉시 종료(1b 선행 필요).
 
 **결과**: `data/bev/dataset/<name>/sample_NNNNNN/` 마다
-- `label.png` — 순수 class(0/1/2) **인덱스 팔레트**(재라벨 원본), `review.png` — 검수뷰(ego 박스·미터축),
-- `cam_{front,left,right}.jpg` — 원본 3이미지, `meta.json` — pose·stamp·BEV 규격·파라미터.
+- `label.png` — 순수 class(0/1/2) **인덱스 팔레트**(재라벨 원본, 사람이 이걸 보정),
+- `ipm_rgb.png` — 3어안 IPM 투영 **80×80 BEV RGB 캔버스**(위에서 본 주행면; 보정 배경),
+- `review.png` — 상단 원본 3어안(좌·전·우) + 하단 `ipm_rgb`에 라벨 오버레이(미터축·격자·ego),
+- `cam_{front,left,right}.jpg` — 원본 3이미지, `meta.json` — pose·stamp·BEV 규격·파라미터(z_gate·kf_step·cam_height).
 - 최상위 `dataset.csv`(sample↔frame↔stamp). 상세·규격·주의: [BEV_AUTOLABEL §A·§4·§7](BEV_AUTOLABEL.md).
 
 ---
 
-## 6단계. 자체 annotation (drivable 마스크)
+## 6단계. 최종 BEV 데이터셋 확정 (사람 보정)
 
-**무엇**: 사람이 각 sample의 **이미지 3장에 drivable 영역 마스크**를 직접 그린다(7단계 IPM의 입력).
-sample마다 `cam_front/left/right` 이름이 겹쳐 한 폴더로 못 모으므로 **펼치고(export) → 작업 → 되돌린다(gather)**.
+**무엇**: auto-label은 초안이다. 5단계가 이미 **IPM 배경(`ipm_rgb.png`) + LiDAR 라벨(`label.png`)** 을 `review.png`로
+겹쳐 주므로, **별도의 카메라 마스킹·IPM 투영 단계 없이** 사람이 BEV 위에서 라벨을 보정해 확정한다.
 
-```bash
-cd calibration/bev_autolabel
+> **왜 마스킹이 사라졌나**: 예전엔 사람이 카메라 3장에 drivable 마스크를 그려 IPM 투영·융합했다(`dataset_flatten`+`ipm_review`).
+> 이제 `generate.py`가 IPM 배경 위에 라벨을 미리 얹어 주므로, 사람은 처음부터 그리지 않고 **보정만** 하면 된다.
 
-# 1) 펼치기(업로드용): 파일명에 sample 인코딩 → sample_NNNNNN__cam_{name}.jpg (이름 유일)
-python3 dataset_flatten.py export --dataset-dir ../../data/bev/dataset/<name> --out <flat_imgs>
-
-# 2) CVAT 등 annotation tool에서 drivable 마스크 작업 → export
-#    CVAT는 "Segmentation mask 1.1"로 내보냄(labelmap.txt + SegmentationClass/, 클래스별 RGB 컬러)
-
-# 3) 되돌리기 — CVAT: labelmap의 drivable 색만 정확히 255로 (설정 무관)
-python3 dataset_flatten.py gather-cvat \
-  --cvat-dir ../../data/bev/annotations/<name>/cvat_label \
-  --out      ../../data/bev/annotations/<name>            # --class 기본 drivable
-```
-
-**주요 옵션/변형**:
-- **CVAT면 `gather-cvat`** 를 쓴다: `SegmentationClass/*.png`는 0/1 이진이 아니라 클래스별 RGB 컬러이고
-  색이 프로젝트 설정마다 달라진다 → `labelmap.txt`에서 클래스명(기본 `drivable`)의 색을 읽어 정확히 매칭(다른 클래스 오염 없음).
-- **이미 0/255 이진 마스크**를 주는 툴이면 `gather`(파일명에 `sample_NNNNNN__cam_<name>`만 있으면 접미사 붙어도 인식, `>0`을 drivable로 이진화).
-
-**결과**: `data/bev/annotations/<name>/sample_NNNNNN/cam_{front,left,right}.png`(흰=drivable). 마스크 그린 sample만 있어도 됨(부분 라벨 OK). 상세: [BEV_AUTOLABEL §A.6](BEV_AUTOLABEL.md).
-
----
-
-## 7단계. IPM 투영 + LiDAR 융합 검수
-
-**무엇**: 6단계의 이미지 마스크를 **바닥 평면(z=−H)에 역투영(IPM)** 해 BEV로 올리고, 같은 sample의 `meta.json`으로
-**LiDAR 라벨을 재구성**해 겹쳐 본다. 두 정보의 오차 성격이 상보적(IPM=바닥엔 강하나 수직물체 번짐, LiDAR=장애물엔 강하나 바닥 못 봄)이라 겹쳐 놓고 검수한다.
-
-> **IPM은 pose·map을 쓰지 않는다** — 오직 calib(DS intrinsic + `T_cam_lidar`) + 실측 카메라 높이 H + 마스크 픽셀만으로,
-> "바닥은 평평하다" 가정 위에 각 프레임을 독립 투영한다. pose·map은 겹쳐 볼 LiDAR 라벨 재구성에만 쓰인다.
-
-```bash
-cd calibration/bev_autolabel
-python3 ipm_review.py \
-  --dataset-dir ../../data/bev/dataset/<name> \
-  --map-dir     ../../data/sj_bags/<날짜>/maps/<name>_mapping \
-  --mask-dir    ../../data/bev/annotations/<name> \
-  --cam-height  0.87
-```
-
-**주요 옵션**:
-- `--cam-height`: 렌즈의 바닥 위 높이(m). 마스트 LiDAR가 바닥을 못 봐 못 주므로 **자로 실측**(예 0.87). IPM 정확도의 핵심.
-- `--near 2.0`: 하늘 후보 바닥 승격 반경. `--out` 미지정 시 각 sample 폴더에 기록.
-- calib·orient·z_gate는 sample `meta.json`에서 자동으로 읽음(플래그로 덮어쓰기 가능).
-
-**결과**: 각 `sample_NNNNNN/`에 추가 —
-- `review_combined.png`(상단 3이미지 + 하단 LiDAR/IPM/융합 3패널; 격자·범례),
-- `label_fused.png`(장식 없는 80×80 다색 카테고리 맵 — 겹침/불일치를 색으로 구분, **label tool에 바로 로드**),
-- `meta_review.json`(카테고리 셀 수).
-- 검수뷰 색: 밝은초록=둘 다 drivable / 빨강=LiDAR 장애물 / 주황=이미지바닥∩LiDAR장애물(→obstacle) / 하늘=이미지 후보바닥 / 어두운초록=LiDAR만 drivable / 회색=미확정. 상세: [BEV_AUTOLABEL §A.6](BEV_AUTOLABEL.md).
-
----
-
-## 8단계. 최종 BEV 데이터셋 자체 annotation (사람 확정)
-
-**무엇**: auto-label은 초안이다. 자동 라벨(5단계 `label.png` / 7단계 `label_fused.png`)이 **100%가 아니므로**,
-사람이 BEV 위에서 검수·보정해 **최종 데이터셋을 확정**한다.
-
-- **일치 셀은 자동 확정, 불일치(융합 검수뷰의 주황/하늘/회색)만 사람이 판단**하면 작업량이 준다.
-- 재라벨 원본: 5단계 `label.png`(순수 class 인덱스 팔레트) 또는 7단계 `label_fused.png`를 label tool에 로드해 수정.
-- 남은 한계(문서화된 것): IPM 평면 가정(원거리·수직물체 번짐), 전방 동적 물체 미처리, 어안→모델 입력 언디스토션 필요, 데이터 규모(일반화는 여러 bag/환경 확충 전제). 상세: [BEV_AUTOLABEL §7·§10](BEV_AUTOLABEL.md).
+**작업 방법**:
+- `review.png`(상단 3어안 + 하단 IPM 캔버스+라벨 오버레이)를 보고 각 sample 판단.
+- **`label.png`(80×80 인덱스 0/1/2)를 BEV 세그멘테이션 툴에 로드**해 직접 수정. 배경으로 `ipm_rgb.png`(위에서 본
+  실제 주행면)를 깔면 통로 경계가 보인다. 보정된 `label.png`가 **최종 정답**.
+- **주된 보정**: auto-label의 drivable(초록)이 궤적 corridor 기반이라 **실제 통로보다 약간 좁다** → 좌우 장애물 경계까지 넓히기.
+- 남은 한계: IPM 평면 가정(수직물체 번짐·원거리 부정확), LiDAR auto-label 국소 drift, 전방 동적 물체 미처리,
+  어안→모델 입력 언디스토션 필요, 데이터 규모(일반화는 여러 bag/환경 확충 전제). 상세: [BEV_AUTOLABEL §A.6·§7·§10](BEV_AUTOLABEL.md).
 
 **결과**: 학습에 바로 쓰는 확정 BEV occupancy 데이터셋(이미지 3장 + 최종 라벨 + meta).
 
@@ -343,7 +291,7 @@ python3 ipm_review.py \
 ```bash
 cd src/econ_camera_ros && python3 -m pytest test/ -q          # 수집·추출 로직 18
 cd calibration/cam_lidar && python3 -m pytest -q              # cam-lidar 18
-cd calibration/bev_autolabel && python3 -m pytest -q          # bev_label 21 + ipm_review
+cd calibration/bev_autolabel && python3 -m pytest -q          # bev_label + ipm 24
 ```
 
 ### B. 자주 겪는 문제 (요약)
