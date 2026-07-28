@@ -254,13 +254,14 @@ python3 generate.py \
 - `--cam-height 0.87`: IPM 지면 평면용 카메라 렌즈 높이(m). 마스트 LiDAR가 바닥을 못 봐 못 주므로 **자로 실측**. IPM 정확도의 핵심.
 - `--z-gate 0.3`: obstacle 바닥근접 여유(**유일한 실질 레버**; 0.15면 통로 더 개방, 0.6은 캐노피 오검).
 - `--alpha 0.45`: review 라벨 오버레이 불투명도. `--limit N`: 스모크(앞 N개만).
+- `--blend nearest`(기본): IPM 다중카메라 합성=셀별 최근접 1대(겹침 유령상 감소). `average`=평균.
 - `T_front_lidar` 키가 없으면 CLI가 즉시 종료(1b 선행 필요).
 
 **결과**: `data/bev/dataset/<name>/sample_NNNNNN/` 마다
 - `label.png` — 순수 class(0/1/2) **인덱스 팔레트**(재라벨 원본, 사람이 이걸 보정),
-- `ipm_rgb.png` — 3어안 IPM 투영 **80×80 BEV RGB 캔버스**(위에서 본 주행면; 보정 배경),
+- `ipm_rgb.png` — 3어안 IPM 투영 **80×80 BEV RGB 캔버스**(위에서 본 주행면; 보정 배경; 기본 nearest 합성),
 - `review.png` — 상단 원본 3어안(좌·전·우) + 하단 `ipm_rgb`에 라벨 오버레이(미터축·격자·ego),
-- `cam_{front,left,right}.jpg` — 원본 3이미지, `meta.json` — pose·stamp·BEV 규격·파라미터(z_gate·kf_step·cam_height).
+- `cam_{front,left,right}.jpg` — 원본 3이미지, `meta.json` — pose·stamp·BEV 규격·파라미터(z_gate·kf_step·cam_height·blend).
 - 최상위 `dataset.csv`(sample↔frame↔stamp). 상세·규격·주의: [BEV_AUTOLABEL §A·§4·§7](BEV_AUTOLABEL.md).
 
 ---
