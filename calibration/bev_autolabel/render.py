@@ -70,17 +70,24 @@ def _camera_row(cam_imgs, W, order=("left", "front", "right")):
     return top
 
 
-def review_overlay(ipm, label, cam_imgs, spec, alpha=0.45, scale=9):
-    """IPM RGB 캔버스에 라벨(obstacle/drivable) 반투명 오버레이 + 미터축·격자·ego,
-    상단에 원본 3어안(좌·전·우). 사람이 이 뷰에서 라벨을 보정한다.
+def blend_label(ipm, label, alpha=0.45):
+    """IPM RGB 캔버스에 라벨(obstacle/drivable) 반투명 오버레이. **네이티브 해상도·장식 없음.**
 
+    CVAT 등에 올려 그 위에서 라벨을 보정하는 annotation base(예: 80×80). 격자·미터축·ego
+    박스는 셀 크기와 맞먹어 네이티브에선 실제 셀을 덮으므로 넣지 않는다(확대 검수는 label_overlay).
     ignore(2) 셀은 배경(IPM 이미지)을 그대로 보여줘 어떤 장면인지 판단할 수 있게 한다.
     """
     over = ipm.copy()
     lab = colorize(label)
     mm = (label == 0) | (label == 1)
     over[mm] = (alpha * lab[mm] + (1 - alpha) * ipm[mm]).astype(np.uint8)
-    bev = cv2.resize(over, (spec.NY * scale, spec.NX * scale),
+    return over
+
+
+def label_overlay(ipm, label, spec, alpha=0.45, scale=9):
+    """blend_label 를 scale 배 확대 + 미터축·격자·ego 박스(= review.png 의 아래 BEV, 사람 검수용).
+    카메라 행은 붙이지 않는다. 장식이 있어 CVAT annotation base 로는 부적합(그건 blend_label)."""
+    bev = cv2.resize(blend_label(ipm, label, alpha), (spec.NY * scale, spec.NX * scale),
                      interpolation=cv2.INTER_NEAREST)
     H, W = bev.shape[:2]
     step = int(round(0.5 / spec.RES)) * scale
@@ -96,5 +103,11 @@ def review_overlay(ipm, label, cam_imgs, spec, alpha=0.45, scale=9):
     cv2.arrowedLine(bev, (ex, ey), (ex, ey - 4 * scale), (255, 128, 0), 2, tipLength=0.3)
     half = int(round(0.2 / spec.RES)) * scale            # 40x40cm footprint
     cv2.rectangle(bev, (ex - half, ey - half), (ex + half, ey + half), (255, 128, 0), 2)
-    top = _camera_row(cam_imgs, W)
+    return bev
+
+
+def review_overlay(ipm, label, cam_imgs, spec, alpha=0.45, scale=9):
+    """label_overlay(아래 BEV) + 상단 원본 3어안(좌·전·우). 사람이 이 뷰에서 라벨을 보정한다."""
+    bev = label_overlay(ipm, label, spec, alpha=alpha, scale=scale)
+    top = _camera_row(cam_imgs, bev.shape[1])
     return bev if top is None else np.vstack([top, bev])

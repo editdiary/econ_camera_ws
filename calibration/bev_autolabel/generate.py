@@ -6,7 +6,8 @@ IPM 투영해 BEV RGB 캔버스를 만든 뒤, (3) 캔버스 위에 라벨을 �
 카메라 이미지에 마스크를 그리는 대신, 이 BEV 뷰에서 미리 채워진 라벨을 보정만 하면 된다.
 
 샘플: sample_NNNNNN/{label.png(인덱스 팔레트 0/1/2), ipm_rgb.png(BEV RGB 캔버스),
-      review.png(캔버스+라벨 오버레이+원본 3어안), cam_{front,left,right}.jpg, meta.json} + dataset.csv
+      overlay.png(80×80 ipm_rgb+라벨 오버레이, 장식 없음=CVAT annotation base),
+      review.png(확대 검수뷰+원본 3어안), cam_{front,left,right}.jpg, meta.json} + dataset.csv
 
 사용:
   cd calibration/bev_autolabel
@@ -97,6 +98,8 @@ def main():
         sd.mkdir(exist_ok=True)
         save_label_png(sd / "label.png", lab)
         cv2.imwrite(str(sd / "ipm_rgb.png"), canvas)
+        cv2.imwrite(str(sd / "overlay.png"),
+                    render.blend_label(canvas, lab, alpha=a.alpha))
         cv2.imwrite(str(sd / "review.png"),
                     render.review_overlay(canvas, lab, imgs, spec, alpha=a.alpha))
         for name in USE:

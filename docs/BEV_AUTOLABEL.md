@@ -31,11 +31,12 @@
 - 파이프라인 CLI 구현 완료: **`calibration/bev_autolabel/`**
   - `bev_label.py`(순수 라벨 로직), `bev_io.py`(맵·stamp·이미지 IO), `ipm.py`(**이미지→지면 IPM RGB 투영**),
     `render.py`(색칠·미터축 검수뷰·IPM 오버레이뷰), `verify_labels.py`(**단계1** 검증 CLI),
-    `generate.py`(**단계2** 데이터셋+IPM CLI), `test_bev_label.py`·`test_ipm.py`(25 테스트).
+    `generate.py`(**단계2** 데이터셋+IPM CLI), `gather_annotations.py`(**단계3** CVAT 업로드용 오버레이 모음),
+    `test_bev_label.py`·`test_ipm.py`·`test_render.py`(29 테스트).
   - 재사용: `calibration/cam_lidar/{chain,cloud_io,calib_io}.py`, `calibration/verify/ds_model.py`.
 - **폐기(2026-07-28)**: 카메라-마스킹 경로 `ipm_review.py`(마스크 IPM+융합)·`dataset_flatten.py`(export/gather-cvat).
   마스크를 사람이 카메라에 그리는 대신 `generate.py`가 IPM 배경+라벨을 미리 얹어 주므로 불필요해짐(§A.6).
-- 검증: raws3 16프레임 + 타 bag 4종(raws1/raws2/rawos2/rawos4, with/without-sun) 일관 확인. 순수 로직 테스트 25+18+7 pass.
+- 검증: raws3 16프레임 + 타 bag 4종(raws1/raws2/rawos2/rawos4, with/without-sun) 일관 확인. 순수 로직 테스트 29+18+7 pass.
 
 ### A.1 PoC(§6) 대비 최종 변경사항 — **§6·§8보다 이 표가 최신**
 | 항목 | PoC 서술(§6) | 최종 구현 |
@@ -93,7 +94,9 @@ python3 generate.py \
 - **`label.png`** — 순수 class(0/1/2) **인덱스 팔레트**(오버레이 없음) = **재라벨링 원본**(사람이 이걸 보정).
 - **`ipm_rgb.png`** — 3어안을 지면 평면에 IPM 투영한 **80×80 BEV RGB 캔버스**(위에서 본 주행면). 라벨 보정 배경.
   다중카메라 합성은 기본 `nearest`(셀별 최근접 카메라 1대 → 겹침 유령상 감소·텍스처 선명), `--blend average`로 평균 전환 가능.
-- **`review.png`** — 상단 원본 3어안(좌·전·우) + 하단 `ipm_rgb`에 라벨 반투명 오버레이(미터축·격자·ego). 검수·보정 기준뷰.
+- **`overlay.png`** — `ipm_rgb`에 라벨 반투명 오버레이, **네이티브 80×80·장식 없음** = **CVAT annotation base**.
+  여기에 라벨링한 마스크가 곧 80×80 정답이라 resize 왕복이 없다(격자·ego 같은 장식은 셀을 덮으므로 넣지 않음).
+- **`review.png`** — 상단 원본 3어안(좌·전·우) + 하단 확대 검수뷰(overlay를 9배 확대 + 미터축·격자·ego). 사람 눈 검수용.
 - **`cam_{front,left,right}.jpg`** — 원본 3이미지.
 - **`meta.json`** — pose(`world_T_body`)·stamp·BEV 규격·사용 파라미터(z_gate·kf_step·cam_height·blend).
 - 그리고 최상위 **`dataset.csv`**(sample↔frame_idx↔stamp). 이미지 결손 키프레임은 건너뛰고 번호는 연속 유지.
@@ -107,8 +110,22 @@ python3 generate.py \
 보여주므로, **별도의 카메라 마스킹·IPM 투영 단계가 없다.** 사람은 다음만 하면 된다:
 
 1. `review.png`(상단 3어안 + 하단 IPM 캔버스+라벨 오버레이)를 보고 각 sample 을 판단.
-2. **`label.png`(80×80 인덱스 0/1/2)를 BEV 세그멘테이션 툴에 로드해 직접 보정.** 배경으로 `ipm_rgb.png`(위에서 본
-   실제 주행면)를 깔면 통로 경계가 보인다. 보정된 `label.png` 가 **최종 정답**이다.
+2. **`gather_annotations.py`로 dataset의 `overlay.png`(=IPM 배경+라벨 오버레이, 네이티브 80×80·장식 없음)를
+   한 폴더로 모아 CVAT 등에 업로드**, 그 위에서 drivable/obstacle 경계를 보정한다:
+   ```bash
+   cd calibration/bev_autolabel
+   python3 gather_annotations.py \
+     --dataset ../../data/bev/dataset/raws1 \
+     --out ../../data/bev/annotations
+   # dataset 하나당 폴더 하나(raws1/) + 하위 2개:
+   # → data/bev/annotations/raws1/label/sample_NNNNNN.png  (80×80) — 이 폴더를 그대로 CVAT 업로드
+   # → data/bev/annotations/raws1/review/sample_NNNNNN.png — 참고용 확대 검수뷰(원본 3어안+BEV)
+   ```
+   **80×80 네이티브라 CVAT 마스크가 곧 정답 해상도** = resize 왕복 없음(격자·ego 장식은 review 로만 확인).
+   `review/` 는 sample 폴더를 하나씩 열지 않고 **한 곳에서 훑어보기 위한 참고뷰**(카메라를 크게, 기본
+   `--review-scale 18`; 0이면 생략). 업로드용 `label/` 과 하위 폴더로 분리돼 CVAT 업로드에 섞이지 않고,
+   dataset 마다 폴더가 하나로 묶여 여러 dataset 을 모아도 경로가 엉키지 않는다.
+   보정 결과(세그멘테이션 마스크)가 **최종 정답**이다. `label.png`(80×80 인덱스 0/1/2)는 재라벨링 원본으로 그대로 남는다.
 
 - **주된 보정 패턴**: auto-label 의 drivable(초록)은 궤적 corridor 기반이라 **실제 통로보다 약간 좁다** →
   초록을 좌우 장애물(빨강) 경계까지 넓히는 것이 대부분. 나머지는 대체로 맞음.

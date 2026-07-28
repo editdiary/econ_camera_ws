@@ -21,8 +21,8 @@
   2. 데이터 수집        record_all → rosbag2_*/           (+QC: check_recording/check_lidar_bag)
   3. 이미지 추출        bag_extract → frame_*/cam{0..3}.jpg + sets.csv
   4. LIO 매핑          lio_map_bag → map.pcd + trajectory.tum   (+궤적 건강성 확인)
-  5. auto-label(라벨+IPM) generate.py → dataset/sample_*/{label,ipm_rgb,review,cam_*,meta}
-  6. 최종 확정            사람이 BEV에서 label.png 보정(IPM 배경 위) → 최종 BEV 데이터셋
+  5. auto-label(라벨+IPM) generate.py → dataset/sample_*/{label,ipm_rgb,overlay,review,cam_*,meta}
+  6. 최종 확정            gather_annotations → annotations/<name>/ 업로드·CVAT 보정 → 최종 BEV 데이터셋
 ```
 
 | 단계 | 실행(대표) | 결과물 | 상세 문서 |
@@ -33,15 +33,15 @@
 | 2. 수집 | `record_all.launch.py` | `rosbag2_*/`(mcap) | [USAGE §3·§9](USAGE.md), [LIDAR §3](LIDAR.md) |
 | 3. 추출 | `bag_extract` | `frame_*/cam{0..3}.jpg` + `sets.csv` | [USAGE §6](USAGE.md) |
 | 4. 매핑 | `lio_map_bag.sh` | `map.pcd` + `trajectory.tum` | [MAPPING.md](MAPPING.md) |
-| 5. auto-label(라벨+IPM) | `generate.py` | `sample_*/{label.png,ipm_rgb.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §A.4](BEV_AUTOLABEL.md) |
-| 6. 최종 확정 | (BEV label tool) | 최종 데이터셋(사람 보정) | [BEV_AUTOLABEL §A.6·§10](BEV_AUTOLABEL.md) |
+| 5. auto-label(라벨+IPM) | `generate.py` | `sample_*/{label.png,ipm_rgb.png,overlay.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §A.4](BEV_AUTOLABEL.md) |
+| 6. 최종 확정 | `gather_annotations.py` → (CVAT) | `annotations/<name>/{label,review}/` → `label/` 업로드·보정 → 최종 데이터셋 | [BEV_AUTOLABEL §A.6·§10](BEV_AUTOLABEL.md) |
 
 > **주기 구분**: 1a·1b(캘리브)는 **리그(카메라·라이다 장착)를 바꾸지 않는 한 1회**만 하고 이후
 > 모든 bag이 그 `calib.yaml`을 공유한다. 2~6은 **수집한 bag마다** 반복한다.
 >
 > **폴더 규약**: 모든 산출물은 `data/`(gitignore) 아래로 모은다. bag별 3쌍을 같은 `<name>`으로 맞춘다 —
 > `data/sj_bags/<날짜>/bags/<bag>` ↔ `.../maps/<name>_mapping`(매핑 산출) ↔ `data/extracted/<name>`(추출 이미지).
-> `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun. BEV 산출은 `data/bev/{dataset,review}/<name>`.
+> `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun. BEV 산출은 `data/bev/{dataset,review,annotations}/<name>`.
 
 ---
 
@@ -260,7 +260,8 @@ python3 generate.py \
 **결과**: `data/bev/dataset/<name>/sample_NNNNNN/` 마다
 - `label.png` — 순수 class(0/1/2) **인덱스 팔레트**(재라벨 원본, 사람이 이걸 보정),
 - `ipm_rgb.png` — 3어안 IPM 투영 **80×80 BEV RGB 캔버스**(위에서 본 주행면; 보정 배경; 기본 nearest 합성),
-- `review.png` — 상단 원본 3어안(좌·전·우) + 하단 `ipm_rgb`에 라벨 오버레이(미터축·격자·ego),
+- `overlay.png` — `ipm_rgb`+라벨 반투명 오버레이(**네이티브 80×80·장식 없음**) = **CVAT 업로드용 보정 base**(resize 왕복 없음),
+- `review.png` — 상단 원본 3어안(좌·전·우) + 하단 확대 검수뷰(9배+미터축·격자·ego, 사람 눈 검수용),
 - `cam_{front,left,right}.jpg` — 원본 3이미지, `meta.json` — pose·stamp·BEV 규격·파라미터(z_gate·kf_step·cam_height·blend).
 - 최상위 `dataset.csv`(sample↔frame↔stamp). 상세·규격·주의: [BEV_AUTOLABEL §A·§4·§7](BEV_AUTOLABEL.md).
 
@@ -276,8 +277,14 @@ python3 generate.py \
 
 **작업 방법**:
 - `review.png`(상단 3어안 + 하단 IPM 캔버스+라벨 오버레이)를 보고 각 sample 판단.
-- **`label.png`(80×80 인덱스 0/1/2)를 BEV 세그멘테이션 툴에 로드**해 직접 수정. 배경으로 `ipm_rgb.png`(위에서 본
-  실제 주행면)를 깔면 통로 경계가 보인다. 보정된 `label.png`가 **최종 정답**.
+- **`gather_annotations.py`로 dataset의 `overlay.png`를 한 폴더로 모아 CVAT 등에 업로드**해 그 위에서 경계를 보정:
+  ```bash
+  python3 calibration/bev_autolabel/gather_annotations.py \
+    --dataset data/bev/dataset/raws1 --out data/bev/annotations
+  # → data/bev/annotations/raws1/label/  (80×80) — 이 폴더 그대로 CVAT 업로드
+  # → data/bev/annotations/raws1/review/ — 참고용 확대 검수뷰(원본 3어안+BEV, 하위 폴더로 분리)
+  ```
+  보정 결과(세그멘테이션 마스크)가 **최종 정답**. `label.png`(80×80 인덱스 0/1/2)는 재라벨 원본으로 남는다.
 - **주된 보정**: auto-label의 drivable(초록)이 궤적 corridor 기반이라 **실제 통로보다 약간 좁다** → 좌우 장애물 경계까지 넓히기.
 - 남은 한계: IPM 평면 가정(수직물체 번짐·원거리 부정확), LiDAR auto-label 국소 drift, 전방 동적 물체 미처리,
   어안→모델 입력 언디스토션 필요, 데이터 규모(일반화는 여러 bag/환경 확충 전제). 상세: [BEV_AUTOLABEL §A.6·§7·§10](BEV_AUTOLABEL.md).
