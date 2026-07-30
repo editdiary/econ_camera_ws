@@ -26,6 +26,13 @@ class BevSpec:
     YH: float = 2.0
     RES: float = 0.05
 
+    def __post_init__(self):
+        for nm in ("XF", "XR", "YH"):
+            v = getattr(self, nm)
+            if abs(v / self.RES - round(v / self.RES)) > 1e-6:
+                raise ValueError(f"{nm}={v} 는 RES={self.RES} 의 정수배여야 합니다"
+                                 " (아니면 NX/NY 반올림으로 실제 범위가 어긋난다)")
+
     @property
     def NX(self) -> int:
         return int(round((self.XF + self.XR) / self.RES))
@@ -66,23 +73,32 @@ def _key3(C):
 
 
 def floor_grid(P, spec, win=1.0, pct=2.0):
-    """국소 저-퍼센타일 바닥 격자. 빈 윈도는 전역 저-퍼센타일로 채움."""
+    """국소 저-퍼센타일 바닥 격자. 빈 윈도는 전역 저-퍼센타일로 채움.
+
+    윈도는 **ego 미터좌표**(floor(x/win), floor(y/win))에 고정한다. 격자 인덱스에 맞추면
+    XF/YH 를 옮기는 순간 모든 윈도가 따라 밀려, 바닥점이 없는 윈도(작물 이랑 내부)의
+    위치가 재배치되면서 floor 추정이 튄다(→ 허위 obstacle → raycast 로 drivable 소실).
+    """
     NX, NY = spec.NX, spec.NY
-    floor = np.full((NX, NY), np.nan)
     if len(P) == 0:
         return np.zeros((NX, NY))
     r, c = rc_of(P[:, 0], P[:, 1], spec)
     inb = (r >= 0) & (r < NX) & (c >= 0) & (c < NY)
-    r, c, z = r[inb], c[inb], P[inb, 2]
-    wc = max(1, int(round(win / spec.RES)))
-    gwr, gwc = r // wc, c // wc
-    for wr in range(0, NX, wc):
-        for wcol in range(0, NY, wc):
-            m = (gwr == wr // wc) & (gwc == wcol // wc)
+    P = P[inb]
+    if len(P) == 0:
+        return np.zeros((NX, NY))
+    X, Y = cell_centers(spec)
+    cwx = np.floor(X / win).astype(int)                # 셀이 속한 윈도(미터 기준)
+    cwy = np.floor(Y / win).astype(int)
+    pwx = np.floor(P[:, 0] / win).astype(int)          # 점이 속한 윈도
+    pwy = np.floor(P[:, 1] / win).astype(int)
+    floor = np.full((NX, NY), np.nan)
+    for wx in range(int(cwx.min()), int(cwx.max()) + 1):
+        for wy in range(int(cwy.min()), int(cwy.max()) + 1):
+            m = (pwx == wx) & (pwy == wy)
             if int(m.sum()) >= 3:
-                floor[wr:wr + wc, wcol:wcol + wc] = np.percentile(z[m], pct)
-    g = np.percentile(z, pct) if len(z) else 0.0
-    floor[np.isnan(floor)] = g
+                floor[(cwx == wx) & (cwy == wy)] = np.percentile(P[m, 2], pct)
+    floor[np.isnan(floor)] = np.percentile(P[:, 2], pct)
     return floor
 
 

@@ -57,6 +57,29 @@ def test_floor_grid_flat_ground():
     assert abs(np.median(f)) < 0.05
 
 
+def test_floor_grid_invariant_to_grid_extent():
+    """국소 바닥 윈도는 ego 미터좌표에 고정 — 격자 범위(XF/YH)를 넓혀도 같은 위치의 floor 는 같다.
+
+    윈도가 격자 인덱스에 정렬돼 있으면 XF/YH 를 0.5m 옮기는 순간 모든 윈도가 따라 밀려
+    바닥 추정이 바뀐다(실측: 겹침영역 전 셀 변경, 최대 1.5m). y=0.5 에서 바닥 높이가
+    튀는 지형을 주면 그 차이가 드러난다.
+    """
+    small = BevSpec()                                  # 3/1/2 (win=1m 미터격자에 우연히 정렬)
+    big = BevSpec(XF=3.5, XR=1.5, YH=2.5)              # 0.5m 밀린 격자
+    xy = np.random.RandomState(3).uniform([-1, -2], [3, 2], (4000, 2))
+    z = np.where(xy[:, 1] >= 0.5, 1.0, 0.0)            # y>=0.5 는 바닥이 1m 높음
+    P = np.column_stack([xy, z])                       # 두 spec 이 완전히 같은 점을 본다
+    f_small = floor_grid(P, small)
+    f_big = floor_grid(P, big)
+    assert np.allclose(f_big[10:90, 10:90], f_small)    # big 의 (10,10) 이 small 의 (0,0)
+
+
+def test_bevspec_rejects_range_not_multiple_of_res():
+    import pytest
+    with pytest.raises(ValueError):
+        BevSpec(XF=3.02)                               # 0.05 의 정수배가 아니면 범위가 어긋난다
+
+
 def test_obstacle_column_detected():
     s = BevSpec()
     floor = np.zeros((s.NX, s.NY))

@@ -4,7 +4,7 @@
 순서대로 따라 할 수 있게** 전 과정을 하나로 꿴다. 각 단계마다 **① 무엇을 하는가 ② 무엇을 실행
 하는가 ③ 주요 옵션 ④ 결과물**을 적고, 깊은 내용은 해당 상세 문서로 링크한다.
 
-- 최종 산출물: 어안 3대(front/left/right) 이미지 → **ego 중심 BEV occupancy 라벨(80×80, 0=obstacle/1=drivable/2=ignore)** 학습 데이터셋.
+- 최종 산출물: 어안 3대(front/left/right) 이미지 → **ego 중심 BEV occupancy 라벨(기본 80×80, 0=obstacle/1=drivable/2=ignore)** 학습 데이터셋.
 - "semi-auto"인 이유: LiDAR+맵과 IPM으로 **초안 라벨을 자동 생성**하되, 100%가 아니므로 **마지막은 사람이 검수·확정**한다.
 
 ---
@@ -240,6 +240,7 @@ python3 verify_labels.py \
   --extract-dir ../../data/extracted/<name> \
   --calib ../../data/calib_260723/calib.yaml --orient ../../data/calib_260723/orientation.json \
   --frames 900 2000 2500 4850 --out ../../data/bev/review/<name>
+  # BEV 범위 변경 예(5m×5m=100×100): --xf 3.5 --xr 1.5 --yh 2.5
 
 # 단계2 — 키프레임 전체를 데이터셋으로 일괄 생성
 python3 generate.py \
@@ -255,12 +256,14 @@ python3 generate.py \
 - `--z-gate 0.3`: obstacle 바닥근접 여유(**유일한 실질 레버**; 0.15면 통로 더 개방, 0.6은 캐노피 오검).
 - `--alpha 0.45`: review 라벨 오버레이 불투명도. `--limit N`: 스모크(앞 N개만).
 - `--blend nearest`(기본): IPM 다중카메라 합성=셀별 최근접 1대(겹침 유령상 감소). `average`=평균.
+- `--xf 3.0 --xr 1.0 --yh 2.0`(기본, =80×80): BEV 전/후/좌우 범위(m). `RES`(0.05 m/cell)는 고정.
+  예) 5m×5m=100×100 → `--xf 3.5 --xr 1.5 --yh 2.5`. 기존 산출물은 전부 80×80이라 섞이지 않게 따로 모을 것.
 - `T_front_lidar` 키가 없으면 CLI가 즉시 종료(1b 선행 필요).
 
 **결과**: `data/bev/dataset/<name>/sample_NNNNNN/` 마다
 - `label.png` — 순수 class(0/1/2) **인덱스 팔레트**(재라벨 원본, 사람이 이걸 보정),
-- `ipm_rgb.png` — 3어안 IPM 투영 **80×80 BEV RGB 캔버스**(위에서 본 주행면; 보정 배경; 기본 nearest 합성),
-- `overlay.png` — `ipm_rgb`+라벨 반투명 오버레이(**네이티브 80×80·장식 없음**) = **CVAT 업로드용 보정 base**(resize 왕복 없음),
+- `ipm_rgb.png` — 3어안 IPM 투영 **BEV RGB 캔버스**(기본 80×80)(위에서 본 주행면; 보정 배경; 기본 nearest 합성),
+- `overlay.png` — `ipm_rgb`+라벨 반투명 오버레이(**네이티브 해상도·장식 없음**) = **CVAT 업로드용 보정 base**(resize 왕복 없음),
 - `review.png` — 상단 원본 3어안(좌·전·우) + 하단 확대 검수뷰(9배+미터축·격자·ego, 사람 눈 검수용),
 - `cam_{front,left,right}.jpg` — 원본 3이미지, `meta.json` — pose·stamp·BEV 규격·파라미터(z_gate·kf_step·cam_height·blend).
 - 최상위 `dataset.csv`(sample↔frame↔stamp). 상세·규격·주의: [BEV_AUTOLABEL §A·§4·§7](BEV_AUTOLABEL.md).
@@ -281,10 +284,10 @@ python3 generate.py \
   ```bash
   python3 calibration/bev_autolabel/gather_annotations.py \
     --dataset data/bev/dataset/raws1 --out data/bev/annotations
-  # → data/bev/annotations/raws1/label/  (80×80) — 이 폴더 그대로 CVAT 업로드
+  # → data/bev/annotations/raws1/label/  (네이티브, 기본 80×80) — 이 폴더 그대로 CVAT 업로드
   # → data/bev/annotations/raws1/review/ — 참고용 확대 검수뷰(원본 3어안+BEV, 하위 폴더로 분리)
   ```
-  보정 결과(세그멘테이션 마스크)가 **최종 정답**. `label.png`(80×80 인덱스 0/1/2)는 재라벨 원본으로 남는다.
+  보정 결과(세그멘테이션 마스크)가 **최종 정답**. `label.png`(인덱스 0/1/2)는 재라벨 원본으로 남는다.
 - **주된 보정**: auto-label의 drivable(초록)이 궤적 corridor 기반이라 **실제 통로보다 약간 좁다** → 좌우 장애물 경계까지 넓히기.
 - 남은 한계: IPM 평면 가정(수직물체 번짐·원거리 부정확), LiDAR auto-label 국소 drift, 전방 동적 물체 미처리,
   어안→모델 입력 언디스토션 필요, 데이터 규모(일반화는 여러 bag/환경 확충 전제). 상세: [BEV_AUTOLABEL §A.6·§7·§10](BEV_AUTOLABEL.md).

@@ -10,6 +10,9 @@
     --orient ../../data/calib_260723/orientation.json \
     --frames 900 2000 2500 4850 \
     --out ../../data/sj_bags/260722/raws3_mapping
+
+BEV 범위는 기본 전방3m·후방1m·좌우2m(=80×80, RES=0.05 고정)이고 `--xf/--xr/--yh` 로 바꾼다.
+예) 5m×5m(100×100): --xf 3.5 --xr 1.5 --yh 2.5
 """
 import argparse
 import pathlib
@@ -37,9 +40,13 @@ def main():
     ap.add_argument("--orient", required=True)
     ap.add_argument("--frames", type=int, nargs="+", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--xf", type=float, default=3.0, help="ego 기준 전방 범위[m]")
+    ap.add_argument("--xr", type=float, default=1.0, help="ego 기준 후방 범위[m]")
+    ap.add_argument("--yh", type=float, default=2.0, help="좌우 각 범위[m] (전체 폭=2*yh)")
     a = ap.parse_args()
 
-    spec = BevSpec()
+    spec = BevSpec(XF=a.xf, XR=a.xr, YH=a.yh)          # RES=0.05 고정
+    print(f"BEV {spec.NX}x{spec.NY} (XF={spec.XF} XR={spec.XR} YH={spec.YH} RES={spec.RES})")
     rig = load_rig(a.calib, a.orient)
     T_front_lidar = load_T_front_lidar(a.calib)
     if T_front_lidar is None:

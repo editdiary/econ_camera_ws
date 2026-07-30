@@ -3,7 +3,8 @@
 
 dataset 하나당 <out>/<dataset이름>/ 폴더 하나를 만들고 그 아래 두 하위 폴더로 나눈다:
   <이름>/label/  — 각 sample 의 ipm_rgb+label 을 render.blend_label 로 합성한 sample_NNNNNN.png
-                   (**네이티브 80×80·장식 없음** → CVAT 라벨링 마스크가 곧 80×80 정답, resize 왕복 없음).
+                   (**네이티브 해상도·장식 없음** → CVAT 라벨링 마스크가 곧 정답, resize 왕복 없음).
+                   해상도는 dataset 을 만든 BEV 범위(기본 80×80)를 meta.json 에서 읽어 따른다.
                    **이 폴더를 그대로** CVAT 등 annotation 툴에 올려 auto-label 을 사람이 보정한다.
   <이름>/review/ — 참고용 확대 검수뷰 sample_NNNNNN.png(원본 3어안 + 확대 BEV = review.png 를 크게).
                    sample 폴더를 하나씩 열지 않고 한곳에서 훑어보기 위함. --review-scale 0 이면 생략.
@@ -18,6 +19,7 @@ dataset 은 재생성하지 않으므로 ipm_rgb+label(+cam_*.jpg) 만 있으면
     --out ../../data/bev/annotations
 """
 import argparse
+import json
 import pathlib
 import sys
 
@@ -32,6 +34,19 @@ import render                             # noqa: E402
 from bev_label import BevSpec             # noqa: E402
 
 USE = ("front", "left", "right")
+
+
+def spec_from_meta(sample_dir):
+    """sample 의 meta.json 에 기록된 BEV 범위로 spec 복원(없는 예전 dataset 은 기본값).
+
+    dataset 을 만든 범위와 다른 spec 으로 review 를 그리면 미터축·격자·ego 박스가
+    엉뚱한 자리에 온다.
+    """
+    mp = pathlib.Path(sample_dir) / "meta.json"
+    if not mp.exists():
+        return BevSpec()
+    b = json.loads(mp.read_text())["bev"]
+    return BevSpec(XF=b["XF"], XR=b["XR"], YH=b["YH"], RES=b["RES"])
 
 
 def main():
@@ -56,7 +71,8 @@ def main():
     if a.review_scale:
         review_dir.mkdir(parents=True, exist_ok=True)
 
-    spec = BevSpec()
+    spec = spec_from_meta(samples[0])
+    print(f"BEV {spec.NX}x{spec.NY} (XF={spec.XF} XR={spec.XR} YH={spec.YH} RES={spec.RES})")
     n = 0
     for sd in samples:
         rgb, lab = sd / "ipm_rgb.png", sd / "label.png"
@@ -65,6 +81,9 @@ def main():
             continue
         ipm = cv2.imread(str(rgb))
         label = np.array(Image.open(lab))              # P 모드 → 인덱스(0/1/2) 2D
+        if label.shape != (spec.NX, spec.NY):
+            sys.exit(f"{sd.name}/label.png {label.shape} != spec {(spec.NX, spec.NY)}"
+                     " — meta.json 의 범위와 라벨 해상도가 다릅니다")
         cv2.imwrite(str(label_dir / f"{sd.name}.png"),
                     render.blend_label(ipm, label, alpha=a.alpha))
         if a.review_scale:

@@ -6,8 +6,11 @@ IPM 투영해 BEV RGB 캔버스를 만든 뒤, (3) 캔버스 위에 라벨을 �
 카메라 이미지에 마스크를 그리는 대신, 이 BEV 뷰에서 미리 채워진 라벨을 보정만 하면 된다.
 
 샘플: sample_NNNNNN/{label.png(인덱스 팔레트 0/1/2), ipm_rgb.png(BEV RGB 캔버스),
-      overlay.png(80×80 ipm_rgb+라벨 오버레이, 장식 없음=CVAT annotation base),
+      overlay.png(네이티브 해상도 ipm_rgb+라벨 오버레이, 장식 없음=CVAT annotation base),
       review.png(확대 검수뷰+원본 3어안), cam_{front,left,right}.jpg, meta.json} + dataset.csv
+
+BEV 범위는 기본 전방3m·후방1m·좌우2m(=80×80, RES=0.05 고정)이고 `--xf/--xr/--yh` 로 바꾼다
+(예: 5m×5m=100×100 은 --xf 3.5 --xr 1.5 --yh 2.5). 쓴 범위는 각 sample 의 meta.json 에 기록된다.
 
 사용:
   cd calibration/bev_autolabel
@@ -64,9 +67,13 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.45, help="review 라벨 오버레이 불투명도")
     ap.add_argument("--blend", choices=("nearest", "average"), default="nearest",
                     help="IPM 다중카메라 합성: nearest(셀별 최근접 1대, 기본)|average(평균)")
+    ap.add_argument("--xf", type=float, default=3.0, help="ego 기준 전방 범위[m]")
+    ap.add_argument("--xr", type=float, default=1.0, help="ego 기준 후방 범위[m]")
+    ap.add_argument("--yh", type=float, default=2.0, help="좌우 각 범위[m] (전체 폭=2*yh)")
     a = ap.parse_args()
 
-    spec = BevSpec()
+    spec = BevSpec(XF=a.xf, XR=a.xr, YH=a.yh)          # RES=0.05 고정
+    print(f"BEV {spec.NX}x{spec.NY} (XF={spec.XF} XR={spec.XR} YH={spec.YH} RES={spec.RES})")
     rig = load_rig(a.calib, a.orient)
     T_front_lidar = load_T_front_lidar(a.calib)
     if T_front_lidar is None:

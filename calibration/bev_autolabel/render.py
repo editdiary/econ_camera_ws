@@ -14,22 +14,28 @@ def colorize(label):
     return out
 
 
+def _grid_axes(bev, spec, scale, step_m=0.5):
+    """0.5m 격자선 + 정수 미터 축 라벨. 선 위치는 **미터좌표 기준**(격자 좌상단 기준이면
+    XF/YH 가 0.5 배수가 아닐 때 선과 미터 라벨이 어긋나 거리를 잘못 읽는다)."""
+    H, W = bev.shape[:2]
+    for x_m in np.arange(np.floor(spec.XF / step_m) * step_m, -spec.XR - 1e-9, -step_m):
+        gy = int(round((spec.XF - x_m) / spec.RES)) * scale
+        cv2.line(bev, (0, gy), (W, gy), (60, 60, 60), 1)
+    for y_m in np.arange(np.floor(spec.YH / step_m) * step_m, -spec.YH - 1e-9, -step_m):
+        gx = int(round((spec.YH - y_m) / spec.RES)) * scale
+        cv2.line(bev, (gx, 0), (gx, H), (60, 60, 60), 1)
+    for r_m in range(-int(spec.XR), int(spec.XF) + 1):     # 축 라벨(전방 x: 위로 +)
+        py = int(round((spec.XF - r_m) / spec.RES)) * scale
+        cv2.putText(bev, f"{r_m}m", (2, max(12, py)), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4, (255, 255, 0), 1, cv2.LINE_AA)
+
+
 def review_image(label, spec, cam_imgs, scale=8):
     """BEV 확대 + 미터축·0.5m 격자·ego·전방화살표, 상단 3카메라 가로 배치."""
     bev = cv2.resize(colorize(label), (spec.NY * scale, spec.NX * scale),
                      interpolation=cv2.INTER_NEAREST)
-    H, W = bev.shape[:2]
-    # 0.5m 격자 + 미터 라벨
-    step = int(round(0.5 / spec.RES)) * scale
-    for gx in range(0, W, step):
-        cv2.line(bev, (gx, 0), (gx, H), (60, 60, 60), 1)
-    for gy in range(0, H, step):
-        cv2.line(bev, (0, gy), (W, gy), (60, 60, 60), 1)
-    # 축 라벨(전방 x: 위로 +, 좌우 y)
-    for r_m in range(-int(spec.XR), int(spec.XF) + 1):
-        py = int((spec.XF - r_m) / spec.RES) * scale
-        cv2.putText(bev, f"{r_m}m", (2, max(12, py)), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4, (255, 255, 0), 1, cv2.LINE_AA)
+    W = bev.shape[1]
+    _grid_axes(bev, spec, scale)
     # ego 위치 + 전방 화살표
     ex, ey = spec.C_EGO * scale, spec.R_EGO * scale
     cv2.circle(bev, (ex, ey), 4, (255, 255, 255), -1)
@@ -89,16 +95,7 @@ def label_overlay(ipm, label, spec, alpha=0.45, scale=9):
     카메라 행은 붙이지 않는다. 장식이 있어 CVAT annotation base 로는 부적합(그건 blend_label)."""
     bev = cv2.resize(blend_label(ipm, label, alpha), (spec.NY * scale, spec.NX * scale),
                      interpolation=cv2.INTER_NEAREST)
-    H, W = bev.shape[:2]
-    step = int(round(0.5 / spec.RES)) * scale
-    for gx in range(0, W, step):
-        cv2.line(bev, (gx, 0), (gx, H), (60, 60, 60), 1)
-    for gy in range(0, H, step):
-        cv2.line(bev, (0, gy), (W, gy), (60, 60, 60), 1)
-    for r_m in range(-int(spec.XR), int(spec.XF) + 1):
-        py = int((spec.XF - r_m) / spec.RES) * scale
-        cv2.putText(bev, f"{r_m}m", (2, max(12, py)), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4, (255, 255, 0), 1, cv2.LINE_AA)
+    _grid_axes(bev, spec, scale)
     ex, ey = spec.C_EGO * scale, spec.R_EGO * scale
     cv2.arrowedLine(bev, (ex, ey), (ex, ey - 4 * scale), (255, 128, 0), 2, tipLength=0.3)
     half = int(round(0.2 / spec.RES)) * scale            # 40x40cm footprint

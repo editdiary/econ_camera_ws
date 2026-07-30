@@ -50,6 +50,22 @@ def test_label_overlay_tints_obstacle_and_drivable_only():
     assert over[23, 53, 1] > 100
 
 
+def test_grid_lines_anchored_to_metric_grid():
+    """0.5m 격자선은 미터좌표에 고정 — XF/YH 가 0.5 배수가 아니어도 x=0·y=0 에 선이 온다.
+
+    격자선이 격자 좌상단 기준이면 미터축 텍스트(미터 계산)와 선이 어긋나 검수자가
+    거리를 잘못 읽는다.
+    """
+    spec = BevSpec(XF=3.2, XR=1.0, YH=2.2)             # 0.5 배수가 아닌 범위
+    label = np.full((spec.NX, spec.NY), 2, np.uint8)   # 전부 ignore → 배경 그대로
+    over = render.label_overlay(_ipm(spec, 100), label, spec, scale=1)
+    r0 = int(round(spec.XF / spec.RES))                # x=0 인 행 = 64
+    c0 = int(round(spec.YH / spec.RES))                # y=0 인 열 = 44
+    assert tuple(over[r0, 25]) == (60, 60, 60)         # x=0 에 가로 격자선
+    assert tuple(over[25, c0]) == (60, 60, 60)         # y=0 에 세로 격자선
+    assert tuple(over[60, 25]) == (100, 100, 100)      # 격자 좌상단 기준 선(row 60)은 없음
+
+
 def test_review_overlay_stacks_camera_row_on_top():
     spec = BevSpec(); scale = 9
     label = np.full((spec.NX, spec.NY), 2, np.uint8)

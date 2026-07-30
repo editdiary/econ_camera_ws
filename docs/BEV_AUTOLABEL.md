@@ -42,7 +42,7 @@
 | 항목 | PoC 서술(§6) | 최종 구현 |
 |---|---|---|
 | obstacle 판정 | 고정 낮은밴드 `[floor+0.1, 1.0]` | **수직성 테스트**: 셀의 `z_min ≤ floor_cell+z_gate`(기본 0.3) **AND** `z_max−z_min ≥ 0.5m` |
-| floor | 전역 z 2퍼센타일 | **국소 격자**(~1m 윈도별 2퍼센타일, 빈 윈도 전역 백필) |
+| floor | 전역 z 2퍼센타일 | **국소 격자**(~1m 윈도별 2퍼센타일, 빈 윈도 전역 백필). 윈도는 **ego 미터좌표에 고정**(격자 범위와 무관) |
 | observed(보이는 곳) | 360° ray-cast 단독 | **카메라 FoV(front/left/right 지면점 투영) ∩ ray-cast 가림** |
 | ego self 반경 | <0.65 m | **<0.28 m**(40×40cm 반대각; 옆 기둥 보존) |
 | corridor(주행 궤적) | 전방만, observed 게이트 | **무조건 drivable**(ground-truth) — 마스트-아래 ego 지면점이 카메라 FoV 가장자리라 observed가 ego에서만 False가 되는 artifact 때문에 게이트 시 `keep_ego_connected`가 drivable을 전멸시킴 |
@@ -103,7 +103,9 @@ python3 generate.py \
 
 ### A.5 파라미터 조정
 `--z-gate`(obstacle 바닥근접 여유)만 실질적 레버다. 0.6은 통로 위 캐노피 오검(비추), 0.15는 통로 개방, 0.3 절충(기본).
-`min_pts`·`min_extent`는 이 환경에선 무효. BEV 범위·해상도(XF/XR/YH/RES)는 `bev_label.BevSpec` 기본값 고정.
+`min_pts`·`min_extent`는 이 환경에선 무효.
+**BEV 범위**는 `--xf/--xr/--yh`(기본 3.0/1.0/2.0 = 80×80)로 조절한다. `RES`(0.05 m/cell)는 고정(§4).
+쓴 범위는 각 sample 의 `meta.json`(`bev`)에 기록되고, `gather_annotations.py` 는 그 값을 읽어 review 를 그린다.
 
 ### A.6 단계3 — 사람 검수·보정 (BEV 위에서 라벨 수정)
 `generate.py`가 이미 **IPM 배경(`ipm_rgb.png`) + LiDAR auto-label(`label.png`)** 을 만들어 `review.png`로 겹쳐
@@ -121,7 +123,7 @@ python3 generate.py \
    # → data/bev/annotations/raws1/label/sample_NNNNNN.png  (80×80) — 이 폴더를 그대로 CVAT 업로드
    # → data/bev/annotations/raws1/review/sample_NNNNNN.png — 참고용 확대 검수뷰(원본 3어안+BEV)
    ```
-   **80×80 네이티브라 CVAT 마스크가 곧 정답 해상도** = resize 왕복 없음(격자·ego 장식은 review 로만 확인).
+   **네이티브 해상도(기본 80×80)라 CVAT 마스크가 곧 정답** = resize 왕복 없음(격자·ego 장식은 review 로만 확인).
    `review/` 는 sample 폴더를 하나씩 열지 않고 **한 곳에서 훑어보기 위한 참고뷰**(카메라를 크게, 기본
    `--review-scale 18`; 0이면 생략). 업로드용 `label/` 과 하위 폴더로 분리돼 CVAT 업로드에 섞이지 않고,
    dataset 마다 폴더가 하나로 묶여 여러 dataset 을 모아도 경로가 엉키지 않는다.
@@ -191,6 +193,11 @@ python3 generate.py \
 | ego 셀 | row=`60`, col=`40` | x=0(전방3m 위, 후방1m 아래), y=0(좌우 중앙) → **ego는 아래쪽 1/4 지점** |
 
 - 저속 로봇이라 주변 3~4m면 충분. 중앙배치(8×8m) 대비 **ignore 낭비↓·전방 감독밀도↑**.
+- 위 값은 **기본값**이고 `verify_labels.py`·`generate.py` 의 `--xf/--xr/--yh` 로 바꿀 수 있다
+  (예: 5m×5m=100×100 → `--xf 3.5 --xr 1.5 --yh 2.5`). **`RES`(0.05)는 고정** — 셀 단위로 박힌
+  상수(obstacle morph 3×3, ray-cast 0.5°)가 함께 스케일되지 않아 판정이 바뀐다.
+- 범위는 `RES` 의 정수배여야 한다(아니면 `BevSpec` 이 `ValueError`).
+- 기존 산출물(`data/bev/dataset/*`·`annotations/*`)은 전부 80×80이므로 범위를 바꾸면 섞이지 않게 따로 모을 것.
 - 라벨 셀 값: `0=obstacle, 1=drivable, 2=ignore`.
 
 ---
@@ -316,14 +323,14 @@ python3 generate.py \
 
 | 이름 | 값 | 위치/의미 |
 |---|---|---|
-| `XF, XR, YH` | 3.0, 1.0, 2.0 m | BEV 전/후/좌우 범위 |
-| `RES` | 0.05 m | 셀 크기 (그리드 80×80) |
+| `XF, XR, YH` | 3.0, 1.0, 2.0 m | BEV 전/후/좌우 범위 (**기본값**, `--xf/--xr/--yh` 로 변경) |
+| `RES` | 0.05 m | 셀 크기 (**고정**, 기본 범위에서 그리드 80×80) |
 | ego 셀 | (60, 40) | x=0,y=0 위치 |
 | self 반경/지속성 | **<0.28 m** / >60% pose | 카트 판정(40×40cm 반대각) |
 | self 복셀 `VOX` | 0.15 m | self-mask 양자화 |
 | self 샘플 pose 수 | 150 | 균등 샘플 |
 | 지역 크롭 반경 | 6 m (수평) | 맵→ego 프리필터 |
-| `floor` | **국소(~1m 윈도) z 2 퍼센타일** | 바닥 높이 격자 |
+| `floor` | **국소(~1m 윈도) z 2 퍼센타일** | 바닥 높이 격자. 윈도는 ego 미터좌표 고정 |
 | 장애물 판정 | **수직성**: z_min ≤ floor+`z_gate`(0.3) AND extent ≥ 0.5 m | 천장·캐노피 배제 |
 | 장애물 셀 임계 | ≥2 점(이 데이터선 무효) | + morph open/close(3×3) |
 | corridor 궤적창 | ±20 s | 전방(x≥-0.2)만 |
