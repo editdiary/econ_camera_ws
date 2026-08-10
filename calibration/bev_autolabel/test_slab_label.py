@@ -9,8 +9,10 @@ _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent / "cam_lidar"))
 sys.path.insert(0, str(_HERE.parent / "verify"))
+sys.path.insert(0, str(_HERE.parent.parent / "mapping"))
 from bev_label import BevSpec                                   # noqa: E402
 import slab_label as sl                                         # noqa: E402
+from pcd_denoise import read_pcd_raw  # noqa: E402
 
 
 def test_crop_mask_keeps_inside_box():
@@ -195,3 +197,105 @@ def test_assemble_encodes_project_convention():
     assert occ.tolist() == [[0, 1]]               # 0=obstacle, 1=drivable
     assert vis.tolist() == [[1, 0]]               # camera_ok=False → unseen
     assert occ.dtype == np.uint8 and vis.dtype == np.uint8
+
+
+def _write_min_pcd(path, xyz, inten):
+    """테스트용 최소 8필드 binary PCD 작성."""
+    import struct
+    n = len(xyz)
+    head = (
+        "# .PCD v0.7 - Point Cloud Data file format\n"
+        "VERSION 0.7\n"
+        "FIELDS x y z intensity normal_x normal_y normal_z curvature\n"
+        "SIZE 4 4 4 4 4 4 4 4\nTYPE F F F F F F F F\n"
+        "COUNT 1 1 1 1 1 1 1 1\n"
+        f"WIDTH {n}\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\n"
+        f"POINTS {n}\nDATA binary\n"
+    )
+    with open(path, "wb") as f:
+        f.write(head.encode("ascii"))
+        for i in range(n):
+            f.write(struct.pack("<8f", xyz[i, 0], xyz[i, 1], xyz[i, 2],
+                                inten[i], 0.0, 0.0, 0.0, 0.0))
+
+
+def test_write_points_preserves_intensity_and_overwrites_xyz(tmp_path):
+    import slab_io
+    src = tmp_path / "map_clean.pcd"
+    xyz = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    _write_min_pcd(src, xyz, np.array([11.0, 22.0, 33.0]))
+    head, arr = read_pcd_raw(str(src))
+    out = tmp_path / "slab.pcd"
+    idx = np.array([0, 2])
+    body = np.array([[-1.0, -2.0, -3.0], [-7.0, -8.0, -9.0]])
+    slab_io.write_points(str(out), head, arr, idx, body)
+    _, got = read_pcd_raw(str(out))
+    assert len(got) == 2
+    assert got["intensity"].tolist() == [11.0, 33.0]        # 보존
+    assert got["x"].tolist() == [-1.0, -7.0]                # body 좌표로 교체
+    assert got["z"].tolist() == [-3.0, -9.0]
+
+
+def test_load_self_masks_missing_dir_is_empty(tmp_path):
+    import slab_io
+    assert slab_io.load_self_masks(str(tmp_path / "nope")) == {}
+
+
+_LABELMAP = ("# label:color_rgb:parts:actions\n"
+             "background:0,0,0::\n"
+             "handle:61,245,61::\n"
+             "human:140,120,240::\n"
+             "table:250,50,83::\n")
+
+
+def _write_class_mask(path):
+    """실측 마스크와 같은 클래스 색으로 3줄짜리 마스크를 만든다(BGR 로 씀)."""
+    import cv2
+    img = np.zeros((10, 20, 3), np.uint8)        # background=(0,0,0)
+    img[0:3] = (83, 50, 250)                     # table  (RGB 250,50,83)
+    img[3:5] = (240, 120, 140)                   # human  (RGB 140,120,240)
+    img[5:6] = (61, 245, 61)                     # handle (RGB 61,245,61)
+    cv2.imwrite(str(path), img)
+
+
+def test_load_labelmap_excludes_background(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    assert slab_io.load_labelmap(str(tmp_path)) == {
+        "handle": (61, 245, 61), "human": (140, 120, 240), "table": (250, 50, 83)}
+
+
+def test_load_self_masks_default_reads_table_only(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    _write_class_mask(tmp_path / "mask_front.png")
+    m = slab_io.load_self_masks(str(tmp_path), use_names=("front",))
+    assert set(m) == {"front"}
+    assert m["front"][:3].all()                  # table 만 무효
+    assert not m["front"][3:6].any()             # human·handle 은 self 박스가 덮는다
+    assert not m["front"][6:].any()              # background 는 유효
+
+
+def test_load_self_masks_can_select_more_classes(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    _write_class_mask(tmp_path / "mask_front.png")
+    m = slab_io.load_self_masks(str(tmp_path), use_names=("front",),
+                                classes=("table", "human", "handle"))
+    assert m["front"][:6].all()
+    assert not m["front"][6:].any()
+
+
+def test_load_self_masks_skips_missing_file(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    assert slab_io.load_self_masks(str(tmp_path), use_names=("front",)) == {}
+
+
+def test_load_self_masks_rejects_unknown_class(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    _write_class_mask(tmp_path / "mask_front.png")
+    with pytest.raises(ValueError):
+        slab_io.load_self_masks(str(tmp_path), use_names=("front",),
+                                classes=("nope",))

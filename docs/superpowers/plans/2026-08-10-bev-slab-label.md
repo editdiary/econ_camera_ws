@@ -765,7 +765,7 @@ def sample_frames_gray(extract_dir, cam_idx, n=40):
 - [ ] **Step 4: 테스트 통과를 확인한다**
 
 Run: `cd calibration/bev_autolabel && python3 -m pytest test_slab_label.py -q`
-Expected: PASS (25 passed — Task 1~3 의 19개 + 새 6개)
+Expected: PASS (26 passed — Task 1~3 의 19개 + 새 7개)
 
 - [ ] **Step 5: 커밋**
 
@@ -1007,7 +1007,7 @@ def self_box_mask(spec, near=0.4, far=2.1, yh=0.7):
 - [ ] **Step 4: 테스트 통과를 확인한다**
 
 Run: `cd calibration/bev_autolabel && python3 -m pytest test_slab_label.py -q`
-Expected: PASS (27 passed — Task 1~4 의 25개 + 새 2개)
+Expected: PASS (28 passed — Task 1~4 의 26개 + 새 2개)
 
 - [ ] **Step 5: CLI 를 쓴다**
 
