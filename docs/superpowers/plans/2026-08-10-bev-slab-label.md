@@ -1539,6 +1539,180 @@ git commit -m "docs(bev): 슬래브 라벨 실행 가이드(§B)·CLAUDE.md 갱�
 
 ---
 
+### Task 8: IPM RGB 오버레이 + 알려진 한계 기록
+
+**Files:**
+- Modify: `calibration/bev_autolabel/slab_render.py` (`blend_slab` 추가, `review_png` 에 IPM 패널)
+- Modify: `calibration/bev_autolabel/test_slab_render.py` (테스트 추가)
+- Modify: `calibration/bev_autolabel/generate_slab.py` (IPM 캔버스·오버레이 산출)
+- Modify: `docs/BEV_AUTOLABEL.md` (§B 에 IPM 산출물 + 알려진 한계)
+- Modify: `docs/PIPELINE.md` (5단계에 슬래브 경로 안내)
+
+**왜**: LiDAR 슬래브 라벨만으로는 사람이 맞는지 판단할 수 없다. 바닥 모습이 IPM 에만 있고,
+통로가 진짜 막힌 것인지 잎이 슬래브 높이(실제 0.87~1.67m)로 튀어나온 것인지도 RGB 로만 갈린다.
+694 샘플 중 45개(6.5%)가 `visibility` 전역 0 인데(§ 아래 한계), 이 45개는 사람이 그 영역을 직접
+다시 그려야 하고 나머지도 검수·보정이 필요하다.
+
+**Interfaces:**
+- Consumes: `ipm.ipm_canvas(imgs, cams_by_name, T_cam_front, T_front_lidar, cam_height, spec, use_names=USE, blend="nearest") -> (NX,NY,3) BGR uint8`(빈 셀=0). `render.py` 의 `blend_label`·`label_overlay`·`review_overlay` 는 **읽고 패턴만 따르며 수정하지 않는다**(옛 0/1/2 라벨용).
+- Produces: `blend_slab(ipm, occupancy, visibility, alpha=0.45) -> (NX,NY,3) uint8`
+
+- [ ] **Step 1: `blend_slab` 의 실패하는 테스트를 쓴다**
+
+오버레이 규약: `vis=1` 인 셀만 색을 얹고, **`vis=0` 셀은 IPM 원본을 그대로 보여준다**. 미관측
+영역에 색을 얹으면 사람이 장면을 못 보고 보정할 수 없다 — 옛 `blend_label` 이 ignore 셀을
+배경으로 남긴 것과 같은 이유다.
+
+`test_slab_render.py` 끝에 추가한다:
+
+```python
+def test_blend_slab_tints_only_visible_cells():
+    ipm = np.full((2, 3, 3), 100, np.uint8)
+    occ = np.array([[0, 1, 0], [1, 0, 1]], np.uint8)     # 0=obstacle 1=drivable
+    vis = np.array([[1, 1, 0], [0, 1, 1]], np.uint8)
+    out = sr.blend_slab(ipm, occ, vis, alpha=0.5)
+    assert (out[0, 2] == 100).all()                       # vis=0 → IPM 원본 그대로
+    assert (out[1, 0] == 100).all()
+    assert not (out[0, 0] == 100).all()                   # vis=1 → 색이 얹힌다
+    assert not (out[0, 1] == 100).all()
+    assert tuple(out[0, 0]) != tuple(out[0, 1])           # obstacle 과 drivable 은 다른 색
+
+
+def test_blend_slab_alpha_zero_is_untouched_ipm():
+    ipm = np.full((2, 2, 3), 77, np.uint8)
+    occ = np.zeros((2, 2), np.uint8)
+    vis = np.ones((2, 2), np.uint8)
+    assert (sr.blend_slab(ipm, occ, vis, alpha=0.0) == 77).all()
+```
+
+- [ ] **Step 2: 실패를 확인한다**
+
+Run: `cd calibration/bev_autolabel && python3 -m pytest test_slab_render.py -q`
+Expected: FAIL — `AttributeError: module 'slab_render' has no attribute 'blend_slab'`
+
+- [ ] **Step 3: `blend_slab` 을 구현하고 `review_png` 에 IPM 패널을 붙인다**
+
+`slab_render.py` 에 추가한다:
+
+```python
+def blend_slab(ipm, occupancy, visibility, alpha=0.45):
+    """IPM RGB 캔버스에 슬래브 라벨을 반투명 오버레이. 네이티브 해상도·장식 없음.
+
+    CVAT 등에 올려 그 위에서 라벨을 보정하는 annotation base 다. 격자·미터축은 셀 크기와
+    맞먹어 네이티브에선 실제 셀을 덮으므로 넣지 않는다(확대 검수는 review_png).
+
+    vis=0 셀은 IPM 원본을 그대로 남긴다 — 미관측 영역에 색을 얹으면 사람이 장면을 못 보고
+    보정할 수 없다. 45/694 샘플은 vis 가 전역 0 이어서 이 규약 덕에 IPM 이 온전히 보인다.
+    """
+    over = np.asarray(ipm).copy()
+    occ = np.asarray(occupancy)
+    m = np.asarray(visibility).astype(bool)
+    tint = np.zeros(over.shape, np.uint8)
+    tint[occ == 0] = _C_VIS_OBS
+    tint[occ == 1] = _C_VIS_DRIV
+    over[m] = (alpha * tint[m] + (1 - alpha) * over[m]).astype(np.uint8)
+    return over
+```
+
+`review_png` 를 확장한다. 기존 4색 BEV 패널 **옆에** IPM+라벨 패널을 나란히 두고, 카메라 행은
+그 위에 전체 폭으로 얹는다. IPM 이 주어지지 않으면 지금 동작(4색 단독)을 유지해야 한다 —
+`ipm` 을 선택 인자로 두고, 기존 테스트가 그대로 통과해야 한다.
+
+두 패널을 같은 `scale` 로 그리고 각 패널에 `_grid_axes` 상당의 격자·미터축·ego 마커를 넣는다.
+패널 제목을 얹어 어느 쪽이 무엇인지 알 수 있게 한다(`4color(occ+vis)` / `ipm+label`).
+
+- [ ] **Step 4: 테스트 통과를 확인한다**
+
+Run: `cd calibration/bev_autolabel && python3 -m pytest test_slab_label.py test_slab_render.py -q`
+Expected: PASS (37 passed — 기존 35개 + 새 2개). 기존 `review_png` 테스트가 수정 없이 통과해야 한다.
+
+- [ ] **Step 5: CLI 에 IPM 산출을 붙인다**
+
+`generate_slab.py` 에 옵션을 추가한다:
+
+```
+--cam-height 0.87        # IPM 지면 평면용 카메라 렌즈 높이[m] 실측값. IPM 정확도의 핵심
+--blend nearest          # nearest(셀별 최근접 1대, 기본)|average
+--alpha 0.45             # 오버레이 불투명도
+--no-ipm                 # IPM 생성을 끈다(LiDAR 라벨만 빠르게 뽑을 때)
+```
+
+샘플마다 추가 저장:
+- `ipm_rgb.png` — `ipm.ipm_canvas(...)` 결과 그대로
+- `overlay.png` — `sr.blend_slab(ipm_rgb, occupancy, visibility, alpha)`. **네이티브 해상도·장식 없음** = CVAT annotation base
+- `review.png` — 카메라 행 + [4색 BEV | IPM+라벨] 두 패널
+
+`meta.json` 의 `params` 에 `cam_height`·`blend`·`alpha` 를 기록한다.
+
+- [ ] **Step 6: raws3 로 실기 확인**
+
+```bash
+cd calibration/bev_autolabel && python3 generate_slab.py \
+  --map-dir ../../data/sj_bags/260722/maps_selfmask/raws3_mapping \
+  --extract-dir ../../data/extracted/raws3 \
+  --calib ../../data/calib_260723/calib.yaml \
+  --orient ../../data/calib_260723/orientation.json \
+  --self-mask-dir ../../data/calib_260723/self_mask \
+  --out ../../data/bev/slab/raws3
+python3 slab_sheet.py ../../data/bev/slab/raws3
+```
+
+판정: `ipm_rgb.png` 에 통로 바닥이 펴져 보이고, `overlay.png` 가 네이티브 해상도(NX×NY)이며
+`review.png` 에 두 패널이 나란히 있다. **`visibility` 전역 0 샘플**(예: `raws1/sample_000067`)에서
+`overlay.png` 가 색 없이 IPM 원본을 온전히 보여주는지 확인한다 — 사람이 그 위에 직접 그려야 하므로
+이게 핵심이다. LiDAR 라벨 수치(`z_ref`·`obstacle`·`cam_ok`·`reach`)는 이전 실행과 동일해야 한다
+(IPM 추가가 라벨을 바꾸면 안 된다).
+
+- [ ] **Step 7: 알려진 한계를 문서에 기록한다**
+
+`docs/BEV_AUTOLABEL.md` §B 에 하위 절을 추가한다. 실측값으로 쓴다:
+
+```markdown
+### 알려진 한계 — visibility 전역 0 샘플 (694 중 45개, 6.5%)
+
+`visibility` 가 전역 0 이라 학습에서 통째로 마스킹되는 샘플이 있다. bag 별 분포:
+raws1 14 / raws2 6 / raws3 **0** / rawos1 3 / rawos2 19 / rawos3 2 / rawos4 1.
+그중 ego 셀 자체가 obstacle 인 경우가 25개(3.6%)다.
+
+**메커니즘**: `raycast_visible` 은 ego 셀에서 출발해 첫 obstacle 셀에서 멈춘다. 그래서 ego 셀이
+obstacle 이면 모든 ray 가 즉시 끊겨 visibility 가 전역 0 이 된다.
+
+**원인은 셋이 겹친 것**이며 기하로 고칠 수 없다.
+1. **좁은 통로**: 해당 bag 의 obstacle 셀 비율이 애초에 높다(raws1 26.9%·rawos2 28.1% vs raws3 22.2%).
+2. **매핑 드리프트**: 낮은 reach 샘플이 연속 구간으로 뭉쳐 나온다(raws1 66~70·74·78).
+3. **잎의 불규칙한 돌출**: 슬래브가 실제 0.87~1.67m 밴드라, 그 높이에서 잎이 통로로 넘어오면
+   BEV 에서 통로가 실제보다 좁게 찍힌다. 바닥은 비어 있는데도 그렇다.
+
+**ego 반경을 비우는 수정은 하지 않는다.** 실측: raycast 도달률이 0.9% → (r0.3 비움) 5.9%,
+신뢰영역(r>0.7)만 보면 3.9% 다. 정상 샘플이 18~25% 이므로 회복이 미미하다. 지금처럼
+`visibility=0` 으로 두면 라벨이 "여기서 학습하지 마라"를 정직하게 말하는데, 4% 짜리 어중간한
+라벨로 바꾸면 걸러내기 어려워진다 — 명확한 실패가 애매한 성공이 되는 쪽이 QC 에 더 나쁘다.
+
+**대응**: `overlay.png`(IPM+라벨) 위에서 사람이 보정한다. vis=0 셀은 색이 얹히지 않아 IPM 원본이
+그대로 보이므로 그 영역을 직접 그릴 수 있다. 찾는 방법:
+
+    awk '$4+0 < 1.0 {print $1, $4}' data/bev/slab/<name>/_stats.txt   # vis% < 1.0
+
+**reach 가 낮은 bag 의 해석**: raws1 21%·rawos2 14% 는 4.0m 도달률이 낮지만, 그중 대부분이
+이 현상이다(raws1 낮은 reach 20건 중 14건, rawos2 23건 중 19건). 통로가 좁은 것도 사실이고
+그 위에 드리프트·잎 돌출이 겹친 결과다 — 어느 하나로 환원되지 않는다.
+```
+
+`docs/PIPELINE.md` 5단계에 슬래브 경로 안내를 추가한다(기존 `generate.py` 설명은 유지하고,
+LiDAR 라벨 현행판이 `generate_slab.py` 이며 상세는 `BEV_AUTOLABEL.md §B` 임을 명시).
+
+- [ ] **Step 8: 전체 테스트 후 커밋**
+
+```bash
+cd src/econ_camera_ros && python3 -m pytest test/ -q
+cd ../../calibration/bev_autolabel && python3 -m pytest -q
+git add calibration/bev_autolabel/slab_render.py calibration/bev_autolabel/test_slab_render.py \
+        calibration/bev_autolabel/generate_slab.py docs/BEV_AUTOLABEL.md docs/PIPELINE.md
+git commit -m "feat(bev): 슬래브 라벨에 IPM RGB 오버레이 + 알려진 한계 기록"
+```
+
+---
+
 ## 미확정 사항 (구현 중 사용자 확인 필요)
 
 1. **`--thick 0.8`**: 로봇 높이 실측값으로 확정해야 한다. 슬래브 `[z_ref, z_ref+thick]` 은

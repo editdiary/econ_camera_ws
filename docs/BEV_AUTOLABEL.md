@@ -478,3 +478,134 @@ def bev(t_ns):
 
 **시각화**(3이미지+BEV 합성)는 `label`을 색칠(0→빨강, 1→초록, 2→회색)하고 `name2idx[nm]`로 이미지 매칭.
 LiDAR-on-image 진단은 별도 `overlay_diag.py`(맵 점을 `chain.project`로 3대 이미지에 높이색 투영).
+
+## §B 슬래브 라벨 (LiDAR 라벨 현행판)
+
+`map_clean.pcd` 에서 키프레임별 BEV occupancy + visibility 를 만든다. 기존 §A 의
+`generate.py` LiDAR 라벨(`label.png`, 0/1/2)을 대체한다. IPM RGB 경로는 §A 를 그대로 쓴다.
+
+설계 근거·실측값: `docs/superpowers/specs/2026-08-10-bev-slab-label-design.md`
+
+### 실행
+
+    cd calibration/bev_autolabel
+    python3 generate_slab.py \
+      --map-dir ../../data/sj_bags/260722/maps_selfmask/raws3_mapping \
+      --extract-dir ../../data/extracted/raws3 \
+      --calib ../../data/calib_260723/calib.yaml \
+      --orient ../../data/calib_260723/orientation.json \
+      --self-mask-dir ../../data/calib_260723/self_mask \
+      --out ../../data/bev/slab/raws3
+
+### 산출물
+
+    sample_NNNNNN/{slab.pcd, crop.pcd(--save-crop), occupancy.png, visibility.png,
+                   review.png, cam_{front,left,right}.jpg, meta.json} + dataset.csv
+
+검수 산출물은 `slab_sheet.py` 로 따로 만든다(생성 CLI 가 자동 실행하지 않는다):
+
+    cd calibration/bev_autolabel && python3 slab_sheet.py ../../data/bev/slab/raws3
+
+→ 같은 폴더에 `_sheet_review.png`(궤적 전체 15장 격자)·`_sheet_stack.png`(occupancy/
+visibility/review 나란히)·`_stats.txt`(샘플별 z_ref·obstacle·visible·cam_ok·reach).
+
+`occupancy.png` = 0 obstacle / 1 drivable. `visibility.png` = 0 unseen / 1 visible.
+학습에서 visibility 를 loss 마스크로 쓰면 미관측 영역이 자동 배제된다. occupancy 에
+unknown 클래스를 두지 않는 이유가 이것이다.
+
+`review.png` 는 **상단에 원본 3어안(left/front/right) 스트립** + 하단에 BEV 4색이다.
+4색: 초록=보이는 drivable(신뢰 영역), 빨강=보이는 장애물 표면, 갈색=가려진 장애물, 검정=미관측.
+원본과 BEV 를 한 장에서 대조할 수 있어야 라벨이 진짜 맞는지 사람이 판단할 수 있다.
+
+ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바깥을 봐서 생기는 근거리 사각
+(실측 가시 시작 0.65~0.80m)과 후방 self 박스가 합쳐진 것이다.
+
+### 파이프라인
+
+1. pose 로 body 프레임 3D crop (z 무제한) — rawos 의 world z 드리프트(−1.7m)가 여기서 상쇄된다
+2. `z_ref` = crop z 하위 1% ≈ LiDAR 수평면 ≈ 실제 지상 0.87m. 슬래브 `[z_ref, z_ref+0.8]`
+   = 로봇이 통과해야 하는 높이 구간. 로봇보다 높은 장애물(열린 문·천장·배관)은 자동 배제
+3. occupancy: 슬래브를 2D 기둥으로 눌러 셀당 점 ≥ 3 이면 obstacle
+4. visibility: ego 셀 2D 360° raycast(첫 obstacle 에서 정지) ∧ 카메라 관측가능성 ∧ ¬self 박스
+
+### 카트 자기 가림 — 이미지 마스크 + self 박스
+
+카메라가 수평 바깥을 보게 장착돼 아래를 못 내려다본다. **실제 지면(z=−0.87)에서 반경 0.5m
+완전 사각, 1.0m 까지 부분 사각**이다(기하만으로 가려지는 셀 4.0%). 여기에 카트 자기 몸이
+더해지는데, 두 종류를 **다른 방법으로** 처리한다.
+
+**상판·LiDAR 받침판 → 이미지 마스크.** 카메라에 고정돼 위치가 변하지 않으므로 이미지 공간에
+칠하는 게 정확하다. `data/calib_260723/self_mask/mask_{front,right,left}.png` + `labelmap.txt`,
+1280×720 클래스 색 PNG(`table 250,50,83`). 기본으로 `table` 만 읽는다(`--self-mask-classes`).
+어안 유효원 바깥 검은 영역(이미지의 12~18%)은 프레임 표본의 밝기 퍼센타일로 자동 검출한다.
+
+**손잡이·수집자 → body 프레임 self 박스** (`--self-box-near/far/yh`, 기본 0.4/2.1/0.7 = 896셀,
+6.2%). 마스크 파일에 `handle`·`human` 도 칠해져 있지만 쓰지 않는다 — 수집자가 화면을 확인하려
+몸을 기울이고, 회전 구간에서 위치가 바뀌고, 턱에 걸려 흔들려서 **이미지에서의 위치가 프레임마다
+달라진다**. 정적 이미지 마스크는 없는 자리를 가리고(데이터 손실) 있는 자리를 놓친다(틀린 라벨).
+물리적 위치는 body 프레임에서 늘 같으므로 박스가 맞다. 기본 박스는 handle·human 이미지 마스크가
+죽이던 셀 143개를 100% 포함하고, `map_clean.pcd` 에 남은 수집자 잔재 위치(Point-LIO self mask
+박스 x −1.5~−0.45·|y|<0.35, 허위 obstacle 12~185셀)도 완전히 담는다.
+
+이미지 마스크가 없어도 돌아가지만 근거리 visibility 가 낙관적이라는 경고가 찍히고
+`meta.json` 의 `self_mask` 가 `null` 이 된다. self 박스는 마스크와 무관하게 항상 적용된다.
+
+### 판정 기준
+
+| 항목 | 기준 |
+|---|---|
+| `z_ref` | bag·위치와 무관하게 +0.0~+0.1 |
+| obstacle 셀 | 20~30% |
+| 궤적셀이 obstacle 인 비율 | < 2% (라벨이 실제 주행과 모순되지 않는지) |
+| 중앙축 `reach_far` | 중앙값 XF 도달, 4.0m 도달 80% 이상 (`slab_sheet.py` 가 계산) |
+| `cam_ok` | 93~95%. 100% 에 가까우면 투영 평면이 틀렸다는 신호 |
+
+### 하지 말 것
+
+- **3D raycast**: ray 원점(body z=0)이 슬래브 밑면에 붙어 있어 수평 ray 가 장애물 아래로
+  빠져나간다. '열에 닿은 voxel 하나라도' 기준이면 visibility 가 거의 전역 1 이 된다.
+- **`--min-pts` 를 10 이상으로**: 실구조물까지 지운다(raws3 obstacle 23.8%→14.9%).
+- **`--pct` 를 5 로**: 슬래브 바닥이 최대 0.25m 들려 실제 하위 점을 잘라먹는다.
+- **corridor prior 부활·self 점 추가 제거**: 측정으로 불필요함이 확인됐고, 넓게 **지우면**
+  좌우 0.33~0.58m 의 실제 통로 벽을 갉아먹는다. self 박스는 점을 지우지 않고 visibility 만
+  0 으로 두므로 이 금지에 걸리지 않는다.
+- **`ground_offset` 를 0 으로**: body z=0 은 수평선 평면이라 FoV 가 100% 로 나오고
+  사각지대가 전부 사라진다.
+- **`handle`·`human` 을 `--self-mask-classes` 에 넣기**: 이미지에서의 위치가 프레임마다
+  달라 정적 마스크로는 못 맞힌다. self 박스가 그 역할이다.
+
+### 7개 bag 검증 (2026-08-10)
+
+`data/sj_bags/260722/maps_selfmask/` 7종(raws1-3, rawos1-4) 전부 `--limit` 없이 완주
+(실패 샘플 0, `skip (missing image)` 없음). `<name>` 은 bag 이름과 동일, 산출물은
+`data/bev/slab/<name>/`.
+
+| bag | n | z_ref 중앙 | obstacle 중앙 | cam_ok 범위 | vis_start 범위* | reach_far 중앙 | 4.0m 도달율 |
+|---|---|---|---|---|---|---|---|
+| raws1 | 98 | +0.045 | 26.9% | 93.5~94.8% | 0.70~0.75m | 2.58m | 21% |
+| raws2 | 101 | +0.049 | 26.8% | 93.5~95.2% | 0.65~0.75m | 4.00m | 62% |
+| raws3 | 98 | +0.048 | 22.2% | 92.8~95.3% | 0.65~0.80m | 4.00m | 85% |
+| rawos1 | 99 | +0.045 | 28.0% | 92.9~95.0% | 0.70~0.80m | 4.00m | 77% |
+| rawos2 | 104 | +0.041 | 28.1% | 92.7~94.8% | 0.70~0.80m | 2.08m | 14% |
+| rawos3 | 96 | +0.045 | 22.5% | 92.9~95.3% | 0.65~0.80m | 4.00m | 82% |
+| rawos4 | 98 | +0.052 | 22.3% | 92.5~94.8% | 0.70~0.80m | 4.00m | 87% |
+
+*중앙축이 완전히 가려져 `reach_far`·`vis_start` 가 둘 다 0.00 이 되는 센티널 샘플은
+제외(raws3=0개 ~ rawos2=20개/104). 둘 다 0 인 행은 "근거리부터 보임"이 아니라
+"중앙축이 아예 안 보임"이므로 그대로 평균 내면 안 된다.
+
+`z_ref`·obstacle·`cam_ok`·`vis_start` 는 7개 bag 전부 raws3 기준선 범위 안. rawos 4종의
+world z 드리프트는 body crop 이 예상대로 상쇄해 `z_ref` 가 raws 와 같은 대역에 남는다.
+`cam_ok` 도 어느 bag 도 100%에 가깝지 않아 투영 평면 오류 신호 없음.
+
+`reach_far` 만 bag 마다 갈린다 — raws3·rawos3·rawos4 는 80%대(82~87%)로 기준을 만족하고,
+rawos1 은 77%로 근접, raws2 는 62%, **raws1(21%)·rawos2(14%) 는 크게 미달**한다. 원인은
+`_sheet_review.png` 로 확인: raws3·rawos3·rawos4 는 중간 구간 대부분이 폭 넓은 부채꼴
+가시 영역(코너 근처를 제외한 통로 폭 상당 부분이 초록)인 반면, raws1·rawos2 는 중간 구간
+대부분이 폭이 좁은 한 줄짜리 초록 세로선이다 — 중앙 몇 칸만 보이고 그 옆은 바로 갈색
+(가려진 장애물)이라는 뜻으로, 전방 1~3m 안에 실제 장애물(통로 폭이 더 좁거나 화분·잎이
+안쪽으로 튀어나온 구간)이 자주 있다는 신호다. `z_ref`·obstacle·`cam_ok` 가 정상 범위인 채
+`reach_far` 만 낮으므로 **파이프라인·매핑 결함이 아니라 그 구간 통로 자체가 좁거나 막혀
+있다는 실측치**로 판단한다 — 라벨링 대상 bag 이 다른 통로/구간을 지나므로 발생하는
+정상적인 bag 간 차이. 학습 시 이 차이를 인지하고 사용해야 한다(예: reach_far 낮은 bag 은
+근거리 회피 판단 위주 샘플로 활용).

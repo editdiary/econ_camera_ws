@@ -66,6 +66,16 @@
   **BEV 범위는 CLI 옵션**(`--xf/--xr/--yh`, 기본 3.0/1.0/2.0 = 80×80; `RES`=0.05 고정) — 5m×5m는 `--xf 3.5 --xr 1.5 --yh 2.5`.
   국소 floor 윈도는 **ego 미터좌표에 고정**(격자 인덱스 기준이면 범위를 옮길 때 바닥 추정이 튀어 허위 obstacle 발생).
   IPM 다중카메라 합성은 기본 `nearest`(셀별 최근접 1대, 겹침 유령상 감소)·`--blend average` 선택 가능.
+  **슬래브 라벨(LiDAR 라벨 현행판)**: `slab_label.py`+`slab_io.py`+`slab_render.py`+`generate_slab.py`
+  → `data/bev/slab/<name>/sample_NNNNNN/{slab.pcd,occupancy.png,visibility.png,review.png}`.
+  map_clean.pcd 에서 body 프레임 3D crop → 하위1% z 부터 0.8m 슬래브 → 2D 기둥 count≥3
+  occupancy + (2D raycast ∧ 카메라 관측가능성 ∧ ¬self박스) visibility. 옛 `label.png`(0/1/2) 대체.
+  카메라가 수평을 봐서 실제 지면에서 반경 0.5m 완전 사각·1.0m 부분 사각이다. 카트 자기 가림은
+  둘로 나눠 처리: **상판·받침판은 이미지 마스크**(`data/calib_260723/self_mask/`, 클래스 색 PNG,
+  기본 `table` 만) + **손잡이·수집자는 body 프레임 self 박스**(기본 x −2.1~−0.4·|y|≤0.7, 896셀)
+  — 사람의 이미지 위치가 프레임마다 달라 정적 마스크로는 못 맞히기 때문. 어안 원 바깥은 자동 검출.
+  금지: 3D raycast·min_pts≥10·pct=5·corridor prior 부활·ground_offset=0·handle/human 을
+  self-mask-classes 에 넣기. `docs/BEV_AUTOLABEL.md §B`.
 - 순수 로직 테스트 25개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
   한 곳으로 모은다. 하위 구조:
