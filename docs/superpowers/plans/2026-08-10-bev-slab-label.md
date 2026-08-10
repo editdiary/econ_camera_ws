@@ -16,7 +16,7 @@
 - **좌표 규약**: ego=body=LiDAR, x=전방·y=좌·z=상. `row=(XF−x)/RES`, `col=(YH−y)/RES`. 기존 `bev_label.rc_of` 와 동일해야 한다.
 - **라벨 화소값**: `occupancy.png` 는 `0=obstacle, 1=drivable`. `visibility.png` 는 `0=unseen, 1=visible`. 기존 `label.png` 와 같은 약속을 유지한다.
 - **RES 는 0.05 고정**. `XF/XR/YH` 는 RES 의 정수배여야 한다(`BevSpec.__post_init__` 가 검증).
-- **기본값**: `XF=4.0 XR=2.0 YH=3.0`(=120×120) `THICK=0.8` `PCT=1.0` `MIN_PTS=3` `RAY_STEP=0.25` `GROUND_OFFSET=0.87` `KF_STEP=0.4`
+- **기본값**: `XF=4.0 XR=2.0 YH=3.0`(=120×120) `THICK=0.8` `PCT=1.0` `MIN_PTS=3` `RAY_STEP=0.25` `GROUND_OFFSET=0.87` `KF_STEP=0.4` `SELF_MASK_CLASSES=table` `SELF_BOX near=0.4 far=2.1 yh=0.7`
 - **복붙 금지, import 로 재사용**: `mapping/pcd_denoise.read_pcd_raw`·`write_pcd_raw`, `calibration/cam_lidar/cloud_io.load_tum`·`pose_at`, `calibration/cam_lidar/chain.se3_inv`·`transform`·`project`, `calibration/verify/ds_model.load_rig`, `calibration/cam_lidar/calib_io.load_T_front_lidar`, `calibration/bev_autolabel/bev_io.load_stamps`, `calibration/bev_autolabel/bev_label.BevSpec`·`rc_of`·`cell_centers`·`raycast_visible`·`select_keyframes`.
 - **numpy/scipy 핀 주의**: 시스템 scipy 가 numpy<1.25 를 요구한다. `pip install` 로 numpy≥2 를 끌어오는 패키지(opencv-python≥4.10 등)를 설치하면 scipy 가 깨진다. 새 의존성을 추가하지 않는다.
 - **테스트 실행**: `cd calibration/bev_autolabel && python3 -m pytest test_slab_label.py test_slab_render.py -q`
@@ -512,7 +512,8 @@ git commit -m "feat(bev): 비네팅 자동검출·카메라 관측가능성·라
 - Produces:
   - `load_map(map_dir: str) -> tuple[list, np.ndarray, np.ndarray, np.ndarray, list]` = `(head, arr, xyz(N,3) float64, times_ns, poses)`
   - `write_points(path, head, arr, idx: np.ndarray, xyz_body: np.ndarray)` — `arr[idx]` 를 복제하고 x/y/z 를 `xyz_body` 로 덮어 쓴다(나머지 필드 보존)
-  - `load_self_masks(mask_dir, use_names=("front","left","right")) -> dict[str, np.ndarray[bool]]` (True=무효). 폴더가 없으면 `{}`
+  - `load_labelmap(mask_dir) -> dict[str, tuple[int,int,int]]` (클래스명→RGB, `background` 제외)
+  - `load_self_masks(mask_dir, use_names=("front","left","right"), classes=("table",), tol=10) -> dict[str, np.ndarray[bool]]` (True=무효). 폴더·파일이 없으면 그 이름을 건너뛴다
   - `sample_frames_gray(extract_dir, cam_idx: int, n: int = 40) -> np.ndarray[(F,H,W), uint8]`
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
@@ -562,18 +563,64 @@ def test_load_self_masks_missing_dir_is_empty(tmp_path):
     assert slab_io.load_self_masks(str(tmp_path / "nope")) == {}
 
 
-def test_load_self_masks_threshold_at_127(tmp_path):
+_LABELMAP = ("# label:color_rgb:parts:actions\n"
+             "background:0,0,0::\n"
+             "handle:61,245,61::\n"
+             "human:140,120,240::\n"
+             "table:250,50,83::\n")
+
+
+def _write_class_mask(path):
+    """실측 마스크와 같은 클래스 색으로 3줄짜리 마스크를 만든다(BGR 로 씀)."""
     import cv2
+    img = np.zeros((10, 20, 3), np.uint8)        # background=(0,0,0)
+    img[0:3] = (83, 50, 250)                     # table  (RGB 250,50,83)
+    img[3:5] = (240, 120, 140)                   # human  (RGB 140,120,240)
+    img[5:6] = (61, 245, 61)                     # handle (RGB 61,245,61)
+    cv2.imwrite(str(path), img)
+
+
+def test_load_labelmap_excludes_background(tmp_path):
     import slab_io
-    d = tmp_path / "self_mask"
-    d.mkdir()
-    img = np.zeros((10, 20), np.uint8)
-    img[0:5, :] = 255
-    img[5:7, :] = 100                                        # <=127 → 유효
-    cv2.imwrite(str(d / "mask_front.png"), img)
-    m = slab_io.load_self_masks(str(d), use_names=("front",))
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    assert slab_io.load_labelmap(str(tmp_path)) == {
+        "handle": (61, 245, 61), "human": (140, 120, 240), "table": (250, 50, 83)}
+
+
+def test_load_self_masks_default_reads_table_only(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    _write_class_mask(tmp_path / "mask_front.png")
+    m = slab_io.load_self_masks(str(tmp_path), use_names=("front",))
     assert set(m) == {"front"}
-    assert m["front"][0, 0] and not m["front"][5, 0] and not m["front"][9, 0]
+    assert m["front"][:3].all()                  # table 만 무효
+    assert not m["front"][3:6].any()             # human·handle 은 self 박스가 덮는다
+    assert not m["front"][6:].any()              # background 는 유효
+
+
+def test_load_self_masks_can_select_more_classes(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    _write_class_mask(tmp_path / "mask_front.png")
+    m = slab_io.load_self_masks(str(tmp_path), use_names=("front",),
+                                classes=("table", "human", "handle"))
+    assert m["front"][:6].all()
+    assert not m["front"][6:].any()
+
+
+def test_load_self_masks_skips_missing_file(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    assert slab_io.load_self_masks(str(tmp_path), use_names=("front",)) == {}
+
+
+def test_load_self_masks_rejects_unknown_class(tmp_path):
+    import slab_io
+    (tmp_path / "labelmap.txt").write_text(_LABELMAP)
+    _write_class_mask(tmp_path / "mask_front.png")
+    with pytest.raises(ValueError):
+        slab_io.load_self_masks(str(tmp_path), use_names=("front",),
+                                classes=("nope",))
 ```
 
 `test_slab_label.py` 상단 `sys.path` 블록에 `mapping` 을 추가하고 `read_pcd_raw` 를 import 한다
@@ -639,21 +686,60 @@ def write_points(path, head, arr, idx, xyz_body):
     write_pcd_raw(str(path), head, sub)
 
 
-def load_self_masks(mask_dir, use_names=("front", "left", "right")):
-    """{name: (H,W) bool} True=무효(카트 자체). 폴더·파일이 없으면 그 이름을 건너뛴다."""
+def load_labelmap(mask_dir):
+    """labelmap.txt → {클래스명: (R,G,B)}. background 는 뺀다.
+
+    형식(CVAT 내보내기): `# label:color_rgb:parts:actions` 주석 뒤로 `name:R,G,B::` 줄들.
+    """
+    out = {}
+    for line in (pathlib.Path(mask_dir) / "labelmap.txt").read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, _, rest = line.partition(":")
+        rgb = rest.split(":")[0]
+        if name == "background" or not rgb:
+            continue
+        out[name] = tuple(int(v) for v in rgb.split(","))
+    return out
+
+
+def load_self_masks(mask_dir, use_names=("front", "left", "right"),
+                    classes=("table",), tol=10):
+    """{name: (H,W) bool} True=무효. 선택한 클래스 색의 화소만 무효로 본다.
+
+    폴더가 없으면 {}, 개별 파일이 없으면 그 이름을 건너뛴다.
+
+    기본이 table 만인 이유: handle·human 은 이미지에서의 위치가 프레임마다 달라진다
+    (수집자가 화면을 확인하려 몸을 기울이고, 회전 구간에서 위치가 바뀌고, 턱에 걸려
+    흔들린다). 정적 이미지 마스크는 없는 자리를 가리고(데이터 손실) 있는 자리를 놓친다
+    (틀린 라벨). 물리적 위치는 body 프레임에서 늘 같으므로 slab_label.self_box_mask 가
+    대신 덮는다.
+
+    tol 은 색 비교 허용오차. 실측 마스크는 고유색이 2~4개뿐이라 정확히 일치하지만,
+    나중에 안티에일리어싱된 내보내기가 와도 경계가 새지 않게 여유를 둔다.
+    """
     import cv2
     d = pathlib.Path(mask_dir)
     out = {}
     if not d.is_dir():
         return out
+    cmap = load_labelmap(d)
+    want = [np.array(cmap[c], int) for c in classes if c in cmap]
+    if not want:
+        raise ValueError(f"labelmap.txt 에 {tuple(classes)} 중 아무 클래스도 없습니다: {d}")
     for name in use_names:
         p = d / _MASK_FILES[name]
         if not p.is_file():
             continue
-        img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
-        if img is None:
+        bgr = cv2.imread(str(p), cv2.IMREAD_COLOR)
+        if bgr is None:
             continue
-        out[name] = img > 127
+        rgb = bgr[:, :, ::-1].astype(int)
+        m = np.zeros(rgb.shape[:2], bool)
+        for c in want:
+            m |= np.abs(rgb - c).max(axis=2) <= tol
+        out[name] = m
     return out
 
 
@@ -679,7 +765,7 @@ def sample_frames_gray(extract_dir, cam_idx, n=40):
 - [ ] **Step 4: 테스트 통과를 확인한다**
 
 Run: `cd calibration/bev_autolabel && python3 -m pytest test_slab_label.py -q`
-Expected: PASS (22 passed)
+Expected: PASS (25 passed — Task 1~3 의 19개 + 새 6개)
 
 - [ ] **Step 5: 커밋**
 
@@ -850,12 +936,80 @@ git commit -m "feat(bev): 슬래브 라벨 PNG 저장·4색 검수뷰 렌더"
 
 **Files:**
 - Create: `calibration/bev_autolabel/generate_slab.py`
+- Modify: `calibration/bev_autolabel/slab_label.py` (`self_box_mask` 추가)
+- Modify: `calibration/bev_autolabel/test_slab_label.py` (`self_box_mask` 테스트 추가)
 
 **Interfaces:**
 - Consumes: Task 1~5 의 전부. `bev_io.load_stamps(extract_dir) -> {idx: stamp_ns}`, `bev_label.select_keyframes(stamps, times_ns, poses, kf_step) -> list[int]`, `cloud_io.pose_at(times_ns, poses, t_ns) -> (4,4)`, `chain.se3_inv`·`transform`, `ds_model.load_rig(calib, orient) -> CameraRig`(속성 `cams_by_name`·`T_cam_front`·`idx_to_name`), `calib_io.load_T_front_lidar(calib) -> (4,4)|None`
-- Produces: 샘플 폴더 산출물과 `dataset.csv`. 이 CLI 가 최종 사용자 진입점이다.
+- Produces: `self_box_mask(spec, near: float = 0.4, far: float = 2.1, yh: float = 0.7) -> np.ndarray[(NX,NY), bool]` (True=무효), 샘플 폴더 산출물과 `dataset.csv`. 이 CLI 가 최종 사용자 진입점이다.
 
-- [ ] **Step 1: CLI 를 쓴다**
+- [ ] **Step 1: `self_box_mask` 의 실패하는 테스트를 쓴다**
+
+카트 손잡이와 수집자를 body 프레임 박스로 덮는다(이미지 마스크가 아니라). 근거는 설계 §2.8.1 —
+이미지에서의 위치는 프레임마다 달라지지만(기울기·회전·턱 걸림) 물리적 위치는 body 프레임에서
+늘 같다. 기본 박스(896셀, 6.2%)가 handle·human 이미지 마스크가 죽이던 143셀을 100% 포함하고
+Point-LIO self mask 박스(x −1.5~−0.45, |y|<0.35)도 완전히 담는다.
+
+`test_slab_label.py` 끝에 추가한다:
+
+```python
+def test_self_box_mask_bounds():
+    from bev_label import cell_centers
+    spec = BevSpec(XF=1.0, XR=1.0, YH=1.0)          # NX=NY=40
+    m = sl.self_box_mask(spec, near=0.2, far=0.6, yh=0.1)
+    X, Y = cell_centers(spec)
+    assert not m[X > -0.2].any()                     # near 보다 가까우면 제외
+    assert not m[X < -0.6].any()                     # far 보다 멀면 제외
+    assert not m[np.abs(Y) > 0.1].any()
+    assert m.sum() == 8 * 4                          # x 0.4m→8셀, |y|<=0.1→4셀
+
+
+def test_self_box_default_contains_pointlio_box():
+    from bev_label import cell_centers
+    spec = BevSpec(XF=4.0, XR=2.0, YH=3.0)           # 120x120
+    m = sl.self_box_mask(spec)
+    X, Y = cell_centers(spec)
+    pointlio = (X >= -1.5) & (X <= -0.45) & (np.abs(Y) < 0.35)
+    assert not (pointlio & ~m).any()                 # Point-LIO 잔재 영역을 전부 담는다
+    assert m.sum() == 896                            # 실측으로 정한 기본 박스 크기
+```
+
+- [ ] **Step 2: 실패를 확인한다**
+
+Run: `cd calibration/bev_autolabel && python3 -m pytest test_slab_label.py -q`
+Expected: FAIL — `AttributeError: module 'slab_label' has no attribute 'self_box_mask'`
+
+- [ ] **Step 3: `self_box_mask` 를 구현한다**
+
+`slab_label.py` 끝에 추가한다:
+
+```python
+def self_box_mask(spec, near=0.4, far=2.1, yh=0.7):
+    """후방 self 박스: -far <= x <= -near 이고 |y| <= yh 인 셀 (NX,NY) bool. True=무효.
+
+    카트 손잡이(폭 실측 46cm)와 이를 밀며 따라오는 수집자(LiDAR 기준 약 60cm 후방)를 덮어
+    visibility 를 0 으로 만든다.
+
+    이미지 마스크가 아니라 body 프레임 박스로 처리하는 이유: 수집자는 화면을 확인하려 몸을
+    기울이고, 회전 구간에서 위치가 바뀌고, 턱에 걸려 흔들린다. 정적 이미지 마스크는 그 변동
+    앞에서 없는 자리를 가리고(데이터 손실) 있는 자리를 놓친다(틀린 라벨). 물리적 위치는
+    body 프레임에서 늘 같은 영역이다.
+
+    기본값은 실측으로 정했다. 이 박스(896셀, 6.2%)는 (1) handle·human 이미지 마스크가
+    죽이던 셀 143개(x −1.98~−0.98m, |y| 최대 0.68m)를 100% 포함하고, (2) Point-LIO
+    self mask 박스(x −1.5~−0.45, |y|<0.35)도 완전히 담는다 — 후자는 map_clean.pcd 에 남은
+    수집자 잔재(허위 obstacle)의 위치이며 이미지 마스크로는 고칠 수 없는 부분이다.
+    """
+    X, Y = cell_centers(spec)
+    return (X >= -far) & (X <= -near) & (np.abs(Y) <= yh)
+```
+
+- [ ] **Step 4: 테스트 통과를 확인한다**
+
+Run: `cd calibration/bev_autolabel && python3 -m pytest test_slab_label.py -q`
+Expected: PASS (27 passed — Task 1~4 의 25개 + 새 2개)
+
+- [ ] **Step 5: CLI 를 쓴다**
 
 `calibration/bev_autolabel/generate_slab.py` 를 새로 만든다:
 
@@ -904,17 +1058,20 @@ import slab_render as sr                                   # noqa: E402
 USE = ("front", "left", "right")
 
 
-def build_invalid_masks(extract_dir, rig, self_mask_dir, use_names=USE):
+def build_invalid_masks(extract_dir, rig, self_mask_dir, classes=("table",),
+                        use_names=USE):
     """{name: (H,W) bool True=무효} = 어안 원 바깥(자동) ∪ self 마스크(수작업).
 
-    self 마스크가 없으면 어안 원만 쓰고 경고한다 — 그 경우 카트 상판·프레임·팔이
-    가린 근거리가 '보인다'고 나와 visibility 가 낙관적이다.
+    self 마스크가 없으면 어안 원만 쓰고 경고한다 — 그 경우 카트 상판이 가린 근거리가
+    '보인다'고 나와 visibility 가 낙관적이다. 손잡이·수집자는 여기서 다루지 않는다
+    (slab_label.self_box_mask 가 body 프레임에서 덮는다).
     """
     name2idx = {v: k for k, v in rig.idx_to_name.items()}
-    self_masks = slab_io.load_self_masks(self_mask_dir, use_names) if self_mask_dir else {}
+    self_masks = (slab_io.load_self_masks(self_mask_dir, use_names, classes)
+                  if self_mask_dir else {})
     if not self_masks:
-        print("[경고] self 마스크가 없습니다 — 카트 상판·프레임·팔이 가린 근거리 "
-              "visibility 가 낙관적으로 나옵니다.")
+        print("[경고] self 마스크가 없습니다 — 카트 상판이 가린 근거리 visibility 가 "
+              "낙관적으로 나옵니다.")
     out = {}
     for name in use_names:
         frames = slab_io.sample_frames_gray(extract_dir, name2idx[name])
@@ -951,6 +1108,13 @@ def main():
     ap.add_argument("--ray-step", type=float, default=0.25)
     ap.add_argument("--ground-offset", type=float, default=0.87,
                     help="z_ref 아래 실제 지면까지의 거리[m]. IPM cam_height 와 같은 평면")
+    ap.add_argument("--self-mask-classes", default="table",
+                    help="이미지 마스크에서 무효로 읽을 클래스(쉼표 구분). handle·human 은 "
+                         "이미지 위치가 프레임마다 달라 self 박스로 덮는다(설계 §2.8.1)")
+    ap.add_argument("--self-box-near", type=float, default=0.4,
+                    help="후방 self 박스 근단[m]. 박스 = -far <= x <= -near, |y| <= yh")
+    ap.add_argument("--self-box-far", type=float, default=2.1)
+    ap.add_argument("--self-box-yh", type=float, default=0.7)
     ap.add_argument("--kf-step", type=float, default=0.4)
     ap.add_argument("--save-crop", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
@@ -965,7 +1129,8 @@ def main():
     T_front_lidar = load_T_front_lidar(a.calib)
     if T_front_lidar is None:
         sys.exit("calib.yaml 에 extrinsics.T_front_lidar 가 없습니다")
-    invalid = build_invalid_masks(a.extract_dir, rig, a.self_mask_dir)
+    classes = tuple(c.strip() for c in a.self_mask_classes.split(",") if c.strip())
+    invalid = build_invalid_masks(a.extract_dir, rig, a.self_mask_dir, classes)
 
     head, arr, xyz, times_ns, poses = slab_io.load_map(a.map_dir)
     stamps = bev_io.load_stamps(a.extract_dir)
@@ -980,6 +1145,10 @@ def main():
     # max(XF,XR,YH) 로는 부족하다 — 회전에 따라 (XF,YH) 모서리가 world 축에 정렬되면
     # hypot(4,3)=5.0m 가 필요한데 max()*1.5=4.5m 는 모서리를 잘라낸다.
     reach = float(np.hypot(max(spec.XF, spec.XR), spec.YH)) + spec.RES
+    # 박스는 샘플과 무관하므로 루프 밖에서 한 번만 만든다.
+    self_box = sl.self_box_mask(spec, a.self_box_near, a.self_box_far, a.self_box_yh)
+    print(f"self 박스: x -{a.self_box_far}~-{a.self_box_near} |y|<={a.self_box_yh} "
+          f"→ {int(self_box.sum())}셀 ({self_box.mean()*100:.1f}%)")
     rows = []
     for n, idx in enumerate(kf):
         t_ns = stamps[idx]
@@ -1003,7 +1172,9 @@ def main():
         cam_ok = sl.camera_observable(spec, z_ref - a.ground_offset,
                                       rig.cams_by_name, rig.T_cam_front,
                                       T_front_lidar, invalid, use_names=USE)
-        occupancy, visibility = sl.assemble(obstacle, visible, cam_ok)
+        # self 박스는 cam_ok 와 따로 둔다 — stats 의 camera_ok_pct 가 '기하+이미지 마스크
+        # 커버리지' 진단값으로 남아야 박스가 그 수치를 가리지 않는다.
+        occupancy, visibility = sl.assemble(obstacle, visible, cam_ok & ~self_box)
 
         sd = out / f"sample_{n:06d}"
         sd.mkdir(exist_ok=True)
@@ -1032,6 +1203,9 @@ def main():
             "orient": str(pathlib.Path(a.orient).resolve()),
             "self_mask": (str(pathlib.Path(a.self_mask_dir).resolve())
                           if a.self_mask_dir else None),
+            "self_mask_classes": list(classes),
+            "self_box": {"near": a.self_box_near, "far": a.self_box_far,
+                         "yh": a.self_box_yh, "cells": int(self_box.sum())},
             "params": {"thick": a.thick, "pct": a.pct, "min_pts": a.min_pts,
                        "ray_step": a.ray_step, "ground_offset": a.ground_offset,
                        "kf_step": a.kf_step},
@@ -1065,7 +1239,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: 단계 1 검증 — crop/slab pcd**
+- [ ] **Step 6: 단계 1 검증 — crop/slab pcd**
 
 Run:
 ```bash
@@ -1094,7 +1268,7 @@ print('필드', a.dtype.names)
 ```
 Expected: z 가 `[z_ref, z_ref+0.8]` 안, intensity nonzero 비율 > 0, 필드 8개.
 
-- [ ] **Step 3: 단계 2 검증 — occupancy**
+- [ ] **Step 7: 단계 2 검증 — occupancy**
 
 Run:
 ```bash
@@ -1123,7 +1297,7 @@ print('평균 %.2f%% 최대 %.2f%%'%(np.mean(bad),np.max(bad)))
 ```
 판정: 평균 < 2%, 최대 < 9%. (설계 §2.3 실측: raws3 0.2%, rawos1 1.2%)
 
-- [ ] **Step 4: 단계 3 검증 — visibility**
+- [ ] **Step 8: 단계 3 검증 — visibility**
 
 `review.png` 를 눈으로 확인하고, 전방 중앙축 reach 를 잰다:
 ```bash
@@ -1146,11 +1320,12 @@ for d in sorted(glob.glob('/tmp/slab_check/raws3/sample_*')):
 더 낮음(있을 때). `review.png` 에서 초록 통로가 궤적 방향으로 뻗고, 좌우 벽이 빨강,
 벽 뒤가 갈색/검정이어야 한다.
 
-- [ ] **Step 5: 커밋**
+- [ ] **Step 9: 커밋**
 
 ```bash
-git add calibration/bev_autolabel/generate_slab.py
-git commit -m "feat(bev): 슬래브 라벨 생성 CLI(generate_slab.py)"
+git add calibration/bev_autolabel/generate_slab.py calibration/bev_autolabel/slab_label.py \
+       calibration/bev_autolabel/test_slab_label.py
+git commit -m "feat(bev): 슬래브 라벨 생성 CLI + 후방 마스크"
 ```
 
 ---
@@ -1238,20 +1413,29 @@ unknown 클래스를 두지 않는 이유가 이것이다.
 2. `z_ref` = crop z 하위 1% ≈ LiDAR 수평면 ≈ 실제 지상 0.87m. 슬래브 `[z_ref, z_ref+0.8]`
    = 로봇이 통과해야 하는 높이 구간. 로봇보다 높은 장애물(열린 문·천장·배관)은 자동 배제
 3. occupancy: 슬래브를 2D 기둥으로 눌러 셀당 점 ≥ 3 이면 obstacle
-4. visibility: ego 셀 2D 360° raycast(첫 obstacle 에서 정지) ∧ 카메라 관측가능성
+4. visibility: ego 셀 2D 360° raycast(첫 obstacle 에서 정지) ∧ 카메라 관측가능성 ∧ ¬self 박스
 
-### self 마스크 (필수 준비물)
+### 카트 자기 가림 — 이미지 마스크 + self 박스
 
-카메라가 수평 바깥을 보게 장착돼 아래를 못 내려다본다. **반경 0.5m 완전 사각, 1.0m 까지
-부분 사각**이며, 여기에 카트 상판·프레임·핸들·수집자 팔이 더해져 사각이 반경 1.5m 까지
-넓어진다(가려지는 셀 4.0% → 9.7%). 기하로는 안 잡히므로 카메라별 이미지 마스크가 필요하다.
+카메라가 수평 바깥을 보게 장착돼 아래를 못 내려다본다. **실제 지면(z=−0.87)에서 반경 0.5m
+완전 사각, 1.0m 까지 부분 사각**이다(기하만으로 가려지는 셀 4.0%). 여기에 카트 자기 몸이
+더해지는데, 두 종류를 **다른 방법으로** 처리한다.
 
-`data/calib_260723/self_mask/mask_{front,right,left}.png` — 1280×720, **흰색 255 =
-카트 자체(무효)**, 검정 0 = 사용 가능. 상판·프레임 파이프·핸들·팔이 상시 오는 구역을 칠한다.
-어안 유효원 바깥 검은 영역은 프레임 표본의 밝기 퍼센타일로 자동 검출하므로 칠하지 않아도 된다.
+**상판·LiDAR 받침판 → 이미지 마스크.** 카메라에 고정돼 위치가 변하지 않으므로 이미지 공간에
+칠하는 게 정확하다. `data/calib_260723/self_mask/mask_{front,right,left}.png` + `labelmap.txt`,
+1280×720 클래스 색 PNG(`table 250,50,83`). 기본으로 `table` 만 읽는다(`--self-mask-classes`).
+어안 유효원 바깥 검은 영역(이미지의 12~18%)은 프레임 표본의 밝기 퍼센타일로 자동 검출한다.
 
-마스크가 없어도 돌아가지만 근거리 visibility 가 낙관적이라는 경고가 찍히고
-`meta.json` 의 `self_mask` 가 `null` 이 된다.
+**손잡이·수집자 → body 프레임 self 박스** (`--self-box-near/far/yh`, 기본 0.4/2.1/0.7 = 896셀,
+6.2%). 마스크 파일에 `handle`·`human` 도 칠해져 있지만 쓰지 않는다 — 수집자가 화면을 확인하려
+몸을 기울이고, 회전 구간에서 위치가 바뀌고, 턱에 걸려 흔들려서 **이미지에서의 위치가 프레임마다
+달라진다**. 정적 이미지 마스크는 없는 자리를 가리고(데이터 손실) 있는 자리를 놓친다(틀린 라벨).
+물리적 위치는 body 프레임에서 늘 같으므로 박스가 맞다. 기본 박스는 handle·human 이미지 마스크가
+죽이던 셀 143개를 100% 포함하고, `map_clean.pcd` 에 남은 수집자 잔재 위치(Point-LIO self mask
+박스 x −1.5~−0.45·|y|<0.35, 허위 obstacle 12~185셀)도 완전히 담는다.
+
+이미지 마스크가 없어도 돌아가지만 근거리 visibility 가 낙관적이라는 경고가 찍히고
+`meta.json` 의 `self_mask` 가 `null` 이 된다. self 박스는 마스크와 무관하게 항상 적용된다.
 
 ### 판정 기준
 
@@ -1268,10 +1452,13 @@ unknown 클래스를 두지 않는 이유가 이것이다.
   빠져나간다. '열에 닿은 voxel 하나라도' 기준이면 visibility 가 거의 전역 1 이 된다.
 - **`--min-pts` 를 10 이상으로**: 실구조물까지 지운다(raws3 obstacle 23.8%→14.9%).
 - **`--pct` 를 5 로**: 슬래브 바닥이 최대 0.25m 들려 실제 하위 점을 잘라먹는다.
-- **corridor prior 부활·self 점 추가 제거**: 측정으로 불필요함이 확인됐고, 넓게 지우면
-  좌우 0.33~0.58m 의 실제 통로 벽을 갉아먹는다.
+- **corridor prior 부활·self 점 추가 제거**: 측정으로 불필요함이 확인됐고, 넓게 **지우면**
+  좌우 0.33~0.58m 의 실제 통로 벽을 갉아먹는다. self 박스는 점을 지우지 않고 visibility 만
+  0 으로 두므로 이 금지에 걸리지 않는다.
 - **`ground_offset` 를 0 으로**: body z=0 은 수평선 평면이라 FoV 가 100% 로 나오고
   사각지대가 전부 사라진다.
+- **`handle`·`human` 을 `--self-mask-classes` 에 넣기**: 이미지에서의 위치가 프레임마다
+  달라 정적 마스크로는 못 맞힌다. self 박스가 그 역할이다.
 ```
 
 - [ ] **Step 4: `CLAUDE.md` 를 갱신한다**
@@ -1282,10 +1469,13 @@ unknown 클래스를 두지 않는 이유가 이것이다.
   **슬래브 라벨(LiDAR 라벨 현행판)**: `slab_label.py`+`slab_io.py`+`slab_render.py`+`generate_slab.py`
   → `data/bev/slab/<name>/sample_NNNNNN/{slab.pcd,occupancy.png,visibility.png,review.png}`.
   map_clean.pcd 에서 body 프레임 3D crop → 하위1% z 부터 0.8m 슬래브 → 2D 기둥 count≥3
-  occupancy + (2D raycast ∧ 카메라 관측가능성) visibility. 옛 `label.png`(0/1/2) 대체.
-  **self 마스크 필수**(`data/calib_260723/self_mask/mask_{front,right,left}.png`) — 카메라가
-  수평을 봐서 반경 0.5m 완전 사각·1.0m 부분 사각이고 카트 상판까지 겹쳐 1.5m 까지 넓어진다.
-  금지: 3D raycast·min_pts≥10·pct=5·corridor prior 부활·ground_offset=0. `docs/BEV_AUTOLABEL.md §B`.
+  occupancy + (2D raycast ∧ 카메라 관측가능성 ∧ ¬self박스) visibility. 옛 `label.png`(0/1/2) 대체.
+  카메라가 수평을 봐서 실제 지면에서 반경 0.5m 완전 사각·1.0m 부분 사각이다. 카트 자기 가림은
+  둘로 나눠 처리: **상판·받침판은 이미지 마스크**(`data/calib_260723/self_mask/`, 클래스 색 PNG,
+  기본 `table` 만) + **손잡이·수집자는 body 프레임 self 박스**(기본 x −2.1~−0.4·|y|≤0.7, 896셀)
+  — 사람의 이미지 위치가 프레임마다 달라 정적 마스크로는 못 맞히기 때문. 어안 원 바깥은 자동 검출.
+  금지: 3D raycast·min_pts≥10·pct=5·corridor prior 부활·ground_offset=0·handle/human 을
+  self-mask-classes 에 넣기. `docs/BEV_AUTOLABEL.md §B`.
 ```
 
 - [ ] **Step 5: 전체 테스트를 돌리고 커밋한다**
