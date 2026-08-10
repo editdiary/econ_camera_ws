@@ -835,8 +835,10 @@ def test_review_png_scales_and_marks_ego():
     img = sr.review_png(occ, vis, spec, scale=4)
     assert img.shape == (spec.NX * 4, spec.NY * 4, 3)
     ey, ex = spec.R_EGO * 4, spec.C_EGO * 4
-    assert tuple(img[ey, ex]) != tuple(sr.four_color(occ, vis)[spec.R_EGO,
-                                                              spec.C_EGO])
+    # ego 색과 **정확히 일치**해야 한다. '기본색과 다르다'로 두면 무의미한 테스트가 된다 —
+    # 이 spec 에서 ego 는 0.5m 경계에 정확히 놓여 격자선이 ego 픽셀을 지나가므로, 마커
+    # 그리기를 통째로 지워도 격자 회색 때문에 '다르다'가 참이 된다(실측 확인).
+    assert tuple(img[ey, ex]) == sr._C_EGO
 ```
 
 - [ ] **Step 2: 실패를 확인한다**
