@@ -54,7 +54,21 @@ else
     ros2 bag play "$BAG"
 fi
 echo "[lio_map_bag] 재생 종료"
-sleep 3
+
+# 3.5) 노드가 밀린 스캔을 다 처리할 때까지 대기.
+#   재생은 realtime 인데 노드가 못 따라가면 뒤처진 만큼 bag 뒷부분이 통째로 누락된다.
+#   `sleep 3` 고정이던 시절 실측: 같은 bag 재실행마다 궤적이 129s/120s/108s 로 잘려
+#   맵 끝이 x=36.3/34.2/30.2 m 로 제각각이었다(경고 없이 조용히 잘린다).
+#   pose_logger 가 trajectory.tum 을 계속 append 하므로, 파일이 안 커지면 처리가 끝난 것.
+DRAIN_MAX=${DRAIN_MAX:-180}
+last=-1; still=0
+for _ in $(seq 1 "$DRAIN_MAX"); do
+    cur=$(stat -c %s "$OUT/trajectory.tum" 2>/dev/null || echo 0)
+    if [ "$cur" = "$last" ]; then still=$((still + 1)); else still=0; last=$cur; fi
+    [ "$still" -ge 5 ] && break
+    sleep 1
+done
+echo "[lio_map_bag] 처리 완료(궤적 파일 정지 확인)"
 
 # 4) 매핑 노드 SIGINT → scans.pcd 저장
 kill -INT -"$NODE_PGID" 2>/dev/null || kill -INT "$NODE_PGID" 2>/dev/null || true
@@ -76,6 +90,8 @@ fi
     echo "bag: $BAG"
     echo "git: $(git -C "$WS" rev-parse HEAD 2>/dev/null || echo unknown)"
     echo "poses: $(wc -l < "$OUT/trajectory.tum" 2>/dev/null || echo 0)"
+    # 궤적이 bag 길이만큼 나왔는지 = 뒷부분이 잘리지 않았는지 판단 근거
+    [ -s "$OUT/trajectory.tum" ] && echo "traj_span_s: $(awk 'NR==1{a=$1} {b=$1} END{printf "%.1f", b-a}' "$OUT/trajectory.tum")"
     [ -f "$OUT/map.pcd" ] && echo "map_points: $(grep -a -m1 '^POINTS' "$OUT/map.pcd" | awk '{print $2}')"
 } > "$OUT/run_info.txt"
 
