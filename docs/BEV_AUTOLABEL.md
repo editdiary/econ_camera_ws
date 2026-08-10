@@ -50,7 +50,8 @@
 | min_pts/min_extent | 실질 레버로 서술 | 이 데이터에선 무효(맵 조밀·작물 키큼). **z_gate가 유일한 실질 레버** |
 
 ### A.2 사전 준비 (bag당 1회)
-1. **매핑**: bag → `map.pcd` + `trajectory.tum` (Point-LIO, `docs/MAPPING.md`).
+1. **매핑**: bag → `map.pcd`(+`pcd_denoise.py`로 `map_clean.pcd`) + `trajectory.tum`
+   (Point-LIO, `docs/MAPPING.md`). 260722는 이미 `data/sj_bags/260722/maps_selfmask/` 에 7종 완비.
 2. **이미지 추출**: bag → `frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`
    ```bash
    source /opt/ros/humble/setup.bash
@@ -65,7 +66,7 @@
 cd calibration/bev_autolabel
 mkdir -p <출력폴더>            # verify_labels 는 --out 을 자동 생성하지 않음
 python3 verify_labels.py \
-  --map-dir     ../../data/sj_bags/260722/maps/raws3_mapping \
+  --map-dir     ../../data/sj_bags/260722/maps_selfmask/raws3_mapping \
   --extract-dir ../../data/extracted/raws3 \
   --calib       ../../data/calib_260723/calib.yaml \
   --orient      ../../data/calib_260723/orientation.json \
@@ -78,7 +79,7 @@ python3 verify_labels.py \
 ```bash
 cd calibration/bev_autolabel
 python3 generate.py \
-  --map-dir     ../../data/sj_bags/260722/maps/raws3_mapping \
+  --map-dir     ../../data/sj_bags/260722/maps_selfmask/raws3_mapping \
   --extract-dir ../../data/extracted/raws3 \
   --calib       ../../data/calib_260723/calib.yaml \
   --orient      ../../data/calib_260723/orientation.json \
@@ -155,15 +156,24 @@ python3 generate.py \
 |---|---|---|
 | bag | `data/sj_bags/260722/bags/record-all_with-sun_3` | 카메라4(`/dev/video0~3`)+LiDAR(`/unilidar/cloud`) 동기 녹화 |
 | 추출 이미지 | `data/extracted/raws3/` | `bag_extract`로 뽑은 `frame_NNNNNN/cam{0..3}.jpg` + `sets.csv`(타임스탬프) |
-| LIO 맵 | `data/sj_bags/260722/maps/raws3_mapping/` | `map.pcd`(월드 밀집 클라우드, ~263만점), `trajectory.tum`(pose 46.5만, 궤적 162m) |
+| LIO 맵 | `data/sj_bags/260722/maps_selfmask/raws3_mapping/` | `map.pcd`(월드 밀집 클라우드, 259.9만점), `map_clean.pcd`(고립점 제거, 259.8만점), `trajectory.tum`(궤적 42.6m) |
 | 캘리브 | `data/calib_260723/calib.yaml` | DS intrinsic 4대 + 카메라간 extrinsic(`T_cam_front`) + **`T_front_lidar`** |
 | 카메라 방향 | `data/calib_260723/orientation.json` | 카메라 idx↔front/right/rear/left 매핑 |
 
-- **폴더 규칙(bag별 3쌍)**: `sj_bags/260722/bags/<원본bag>` ↔ `sj_bags/260722/maps/<name>_mapping`(LIO 산출)
+- **폴더 규칙(bag별 3쌍)**: `sj_bags/260722/bags/<원본bag>` ↔ `sj_bags/260722/maps_selfmask/<name>_mapping`(LIO 산출)
   ↔ `data/extracted/<name>`(추출 이미지). `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun.
-  라벨 1건 = `--map-dir maps/<name>_mapping` + `--extract-dir extracted/<name>` 쌍을 같은 `<name>`으로 맞춘다.
+  라벨 1건 = `--map-dir maps_selfmask/<name>_mapping` + `--extract-dir extracted/<name>` 쌍을 같은 `<name>`으로 맞춘다.
+  구 `sj_bags/260722/maps/`는 self mask·drain 수정 이전 버전으로, **대조용 보관본이니 라벨 입력으로 쓰지 않는다.**
 - **맵 건강성 확인 필수**: `trajectory.tum` 총 길이를 실제 온실과 대조(궤적 붕괴 시 라벨 오염).
-  PoC 맵은 길이 162.4m·범위 ~12m×35m·z변동 0.58m(평평) = 건강. (참고: `docs/MAPPING.md`, 온실 판정 기준)
+  길이는 **2 Hz로 다운샘플한 뒤** 재라 — raw(~3000 Hz) 연속 차분 합은 지터로 3배 부풀려진다.
+  raws3 재매핑본은 2 Hz 42.6m·시종점 직선 36.9m·범위 ~12m×35m = 건강. 7종 실측치는 `docs/MAPPING.md §6.7`.
+- **`map.pcd` vs `map_clean.pcd`**: 후자는 고립 flyer(`d4>0.3m`, 0.05~0.10%)를 뺀 것으로,
+  BEV 라벨 입력으로는 **`map_clean.pcd`가 맞다**(떠 있는 단독점이 허위 obstacle 셀이 된다).
+  단 현재 `bev_io.load_map()`은 파일명 `map.pcd`를 하드코딩하고 있다 — 라벨 로직을 다시 짤 때
+  입력 파일명을 인자로 받도록 바꿀 것.
+- **rawos 계열 z 경사**: rawos 4종은 종단 z가 −0.9~−1.9m 기운다. 대부분 맵 전체의 강체 기울기라
+  ego-local 크롭에는 불일치분 ≈6cm만 남아 `z-gate`(0.3m) 아래지만, **전역 맵 좌표로 z를 판단하는
+  로직을 새로 넣는다면 반드시 고려**할 것. 근거: `docs/MAPPING.md §6.7`.
 
 ---
 

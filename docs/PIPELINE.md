@@ -20,7 +20,7 @@
 [bag당 반복] ── 수집 & 라벨 ────────────────────────────────────────────────
   2. 데이터 수집        record_all → rosbag2_*/           (+QC: check_recording/check_lidar_bag)
   3. 이미지 추출        bag_extract → frame_*/cam{0..3}.jpg + sets.csv
-  4. LIO 매핑          lio_map_bag → map.pcd + trajectory.tum   (+궤적 건강성 확인)
+  4. LIO 매핑          lio_map_bag → map.pcd + trajectory.tum → pcd_denoise → map_clean.pcd
   5. auto-label(라벨+IPM) generate.py → dataset/sample_*/{label,ipm_rgb,overlay,review,cam_*,meta}
   6. 최종 확정            gather_annotations → annotations/<name>/ 업로드·CVAT 보정 → 최종 BEV 데이터셋
 ```
@@ -32,7 +32,7 @@
 | 1b. cam-lidar | `pick_correspondences` → `solve_extrinsic` | `calib.yaml`에 `T_front_lidar` 추가 | [CAM_LIDAR_CALIBRATION.md](CAM_LIDAR_CALIBRATION.md) |
 | 2. 수집 | `record_all.launch.py` | `rosbag2_*/`(mcap) | [USAGE §3·§9](USAGE.md), [LIDAR §3](LIDAR.md) |
 | 3. 추출 | `bag_extract` | `frame_*/cam{0..3}.jpg` + `sets.csv` | [USAGE §6](USAGE.md) |
-| 4. 매핑 | `lio_map_bag.sh` | `map.pcd` + `trajectory.tum` | [MAPPING.md](MAPPING.md) |
+| 4. 매핑 | `lio_map_bag.sh` → `pcd_denoise.py` | `map.pcd`·`map_clean.pcd` + `trajectory.tum` | [MAPPING.md](MAPPING.md) |
 | 5. auto-label(라벨+IPM) | `generate.py` | `sample_*/{label.png,ipm_rgb.png,overlay.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §A.4](BEV_AUTOLABEL.md) |
 | 6. 최종 확정 | `gather_annotations.py` → (CVAT) | `annotations/<name>/{label,review}/` → `label/` 업로드·보정 → 최종 데이터셋 | [BEV_AUTOLABEL §A.6·§10](BEV_AUTOLABEL.md) |
 
@@ -40,8 +40,9 @@
 > 모든 bag이 그 `calib.yaml`을 공유한다. 2~6은 **수집한 bag마다** 반복한다.
 >
 > **폴더 규약**: 모든 산출물은 `data/`(gitignore) 아래로 모은다. bag별 3쌍을 같은 `<name>`으로 맞춘다 —
-> `data/sj_bags/<날짜>/bags/<bag>` ↔ `.../maps/<name>_mapping`(매핑 산출) ↔ `data/extracted/<name>`(추출 이미지).
+> `data/sj_bags/<날짜>/bags/<bag>` ↔ `.../maps_selfmask/<name>_mapping`(매핑 산출) ↔ `data/extracted/<name>`(추출 이미지).
 > `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun. BEV 산출은 `data/bev/{dataset,review,annotations}/<name>`.
+> 260722의 `.../maps/`(구버전, self mask·drain 수정 이전)는 대조용 보관본이다 — **하류는 `maps_selfmask/`를 쓴다**.
 
 ---
 
@@ -214,17 +215,31 @@ python3 mapping/check_lidar_bag.py rosbag2_<ts>
 
 # 매핑
 colcon build --packages-select point_lio && source install/setup.bash   # 최초 1회
-./mapping/lio_map_bag.sh rosbag2_<ts> data/sj_bags/<날짜>/maps/<name>_mapping
+MAPDIR=data/sj_bags/<날짜>/maps_selfmask/<name>_mapping
+./mapping/lio_map_bag.sh rosbag2_<ts> $MAPDIR
+
+# 고립 노이즈 제거(원본 보존, 옆에 map_clean.pcd 생성) — 하류는 이걸 쓴다
+python3 mapping/pcd_denoise.py $MAPDIR/map.pcd
 ```
 
 **주요 옵션**:
 - `--max-secs N`: bag 재생을 N초에서 중단(LIO 발산/오염 구간 제외).
 - `--no-preview`: 미리보기 PNG 생략.
+- `pcd_denoise.py --dry-run`: 쓰지 않고 제거 통계만. `--dist 0.3`(기본)은 실측 p99.9라 건드릴 일이 드물다.
 
-**결과**: `map.pcd`(월드 밀집 클라우드) + `trajectory.tum`(pose `world_T_body`) + `run_info.txt` + `preview/`.
+**결과**: `map.pcd`(월드 밀집 클라우드) + `map_clean.pcd`(고립점 제거, 실측 0.05~0.10%) +
+`trajectory.tum`(pose `world_T_body`) + `run_info.txt` + `preview/`.
 
-**건강성 판정(중요)**: `trajectory.tum` **총 길이를 실제 공간과 대조**한다. z가 안정해도 궤적이 붕괴하면 매핑 실패
-(온실 긴 복도가 정답). 붕괴한 맵으로 라벨을 만들면 오염된다. 상세: [MAPPING.md](MAPPING.md).
+**self mask(기본 ON)**: 카트를 끄는 수집자가 맵에 통째로 적립되므로 `map.pcd` **저장 단계에서만** 잘라낸다
+(정합에는 남긴다 — 빼면 z 드리프트가 악화). 남았는지는 `python3 mapping/check_self_points.py $MAPDIR --png`
+로 확인. 상세·근거: [MAPPING.md §6.5](MAPPING.md).
+
+**건강성 판정(중요)**: 두 가지를 본다.
+1. **잘림**: `run_info.txt`의 `traj_span_s` ≈ bag 길이(1초 이내). 벌어지면 bag 뒷부분이 통째로 누락된 것.
+2. **붕괴**: `trajectory.tum` **총 길이를 실제 공간과 대조**한다(2 Hz로 다운샘플 후 재라 — raw는 지터로 3배 부풀려짐).
+   z가 안정해도 궤적이 붕괴하면 매핑 실패(온실 긴 복도가 정답). 붕괴한 맵으로 라벨을 만들면 오염된다.
+
+260722 7종 실측치는 [MAPPING.md §6.7](MAPPING.md) 표 참조.
 
 ---
 
@@ -241,7 +256,7 @@ cd calibration/bev_autolabel
 # (선택) 단계1 — 몇 프레임만 검증뷰로 육안 확인
 mkdir -p ../../data/bev/review/<name>
 python3 verify_labels.py \
-  --map-dir ../../data/sj_bags/<날짜>/maps/<name>_mapping \
+  --map-dir ../../data/sj_bags/<날짜>/maps_selfmask/<name>_mapping \
   --extract-dir ../../data/extracted/<name> \
   --calib ../../data/calib_260723/calib.yaml --orient ../../data/calib_260723/orientation.json \
   --frames 900 2000 2500 4850 --out ../../data/bev/review/<name>
@@ -249,7 +264,7 @@ python3 verify_labels.py \
 
 # 단계2 — 키프레임 전체를 데이터셋으로 일괄 생성
 python3 generate.py \
-  --map-dir ../../data/sj_bags/<날짜>/maps/<name>_mapping \
+  --map-dir ../../data/sj_bags/<날짜>/maps_selfmask/<name>_mapping \
   --extract-dir ../../data/extracted/<name> \
   --calib ../../data/calib_260723/calib.yaml --orient ../../data/calib_260723/orientation.json \
   --out ../../data/bev/dataset/<name> --kf-step 0.4 --cam-height 0.87

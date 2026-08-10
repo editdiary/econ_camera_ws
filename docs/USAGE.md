@@ -392,6 +392,9 @@ ros2 launch econ_camera_ros record_lidar.launch.py
 ```bash
 sudo apt install ros-humble-pcl-ros ros-humble-pcl-conversions   # 최초 1회
 colcon build --packages-select point_lio && source install/setup.bash
-./mapping/lio_map_bag.sh <bag_경로> data/ds_mapping_out
+MAPDIR=data/sj_bags/<날짜>/maps_selfmask/<name>_mapping
+./mapping/lio_map_bag.sh <bag_경로> $MAPDIR
+python3 mapping/pcd_denoise.py $MAPDIR/map.pcd     # 고립 노이즈 제거 → map_clean.pcd
 ```
-산출물: `data/ds_mapping_out/{map.pcd, trajectory.tum, run_info.txt, preview/}`.
+산출물: `$MAPDIR/{map.pcd, map_clean.pcd, trajectory.tum, run_info.txt, preview/}`.
+`run_info.txt`의 `traj_span_s`가 bag 길이와 비슷한지 먼저 볼 것(뒷부분 잘림 판정).

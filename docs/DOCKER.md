@@ -32,7 +32,7 @@ cd ~/Desktop/econ_camera_ws     # 서버 경로: /data/home/dhlee/Desktop/econ_c
 
 ```bash
 ./docker/run.sh                                     # 대화형 셸
-./docker/run.sh python3 mapping/pcd_preview.py data/sj_bags/260722/maps/raws1_mapping/map.pcd
+./docker/run.sh python3 mapping/pcd_preview.py data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd
 ./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 generate.py ...'
 ```
 
@@ -79,7 +79,7 @@ pip의 numpy 1.26은 `/usr/local/lib/python3.10/dist-packages`에 깔려 시스�
 ```bash
 # BEV auto-label — 검수뷰(단계1) / 데이터셋 생성(단계2) / CVAT용 수집(단계3)
 ./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 verify_labels.py \
-    --map-dir ../../data/sj_bags/260722/maps/raws1_mapping \
+    --map-dir ../../data/sj_bags/260722/maps_selfmask/raws1_mapping \
     --extract-dir ../../data/extracted/raws1 \
     --calib ../../data/calib_260723/calib.yaml \
     --orient ../../data/calib_260723/orientation.json \
@@ -90,8 +90,11 @@ pip의 numpy 1.26은 `/usr/local/lib/python3.10/dist-packages`에 깔려 시스�
     --images data/calib_260723/extracted --frames "0,800"
 
 # 맵 미리보기 / BEV 격자 (numpy+zlib 자작 PNG라 의존성 0)
-./docker/run.sh python3 mapping/pcd_preview.py data/sj_bags/260722/maps/raws1_mapping/map.pcd
-./docker/run.sh python3 mapping/bev_grid.py    data/sj_bags/260722/maps/raws1_mapping/map.pcd
+./docker/run.sh python3 mapping/pcd_preview.py data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd
+./docker/run.sh python3 mapping/bev_grid.py    data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd
+
+# map.pcd 고립 노이즈 제거 → map_clean.pcd (numpy+scipy cKDTree만 씀)
+./docker/run.sh python3 mapping/pcd_denoise.py data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd
 
 # bag 관련 (mcap 플러그인 포함)
 ./docker/run.sh python3 src/econ_camera_ros/econ_camera_ros/bag_extract.py <bag> -o data/extracted/<name>
@@ -131,7 +134,7 @@ Dockerfile을 고쳤거나 환경이 의심스러울 때 이걸 먼저 돌린다
 | 항목 | 이유 / 대안 |
 |---|---|
 | `cam_lidar/pick_correspondences.py`, `mapping/pcd_view.py` | 인터랙티브 GUI 창 필요. 서버는 헤드리스이고 opencv도 `-headless` 빌드다. 대응점 클릭이 다시 필요하면 디스플레이 있는 장비에서 하거나 이미지에 X11/VNC를 따로 구성해야 한다 |
-| Point-LIO 재매핑 (`mapping/lio_map_bag.sh`) | colcon 빌드 + PCL/Eigen 필요. 현재 `data/sj_bags/260722/maps/`에 8개 bag의 `map.pcd`+`trajectory.tum`이 이미 있어 불필요. 필요해지면 **이 Dockerfile에 apt(PCL) + `colcon build` 레이어를 덧붙이면 된다**(이미지 교체 아님) |
+| Point-LIO 재매핑 (`mapping/lio_map_bag.sh`) | colcon 빌드 + PCL/Eigen 필요. 현재 `data/sj_bags/260722/maps_selfmask/`에 7개 bag의 `map.pcd`·`map_clean.pcd`+`trajectory.tum`이 이미 있어 불필요(매핑 후처리인 `pcd_denoise.py`는 이 이미지에서 돈다). 필요해지면 **이 Dockerfile에 apt(PCL) + `colcon build` 레이어를 덧붙이면 된다**(이미지 교체 아님) |
 | 카메라 촬영·LiDAR 수집 | 하드웨어가 있는 Jetson 전용 |
 
 ## 6. 문제해결

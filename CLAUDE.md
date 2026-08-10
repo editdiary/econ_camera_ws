@@ -2,7 +2,7 @@
 
 이 저장소에서 작업할 때 참고할 핵심 사항. 상세 설계는 아래 spec을, 사용법은 `docs/USAGE.md`를 참조.
 
-## 현재 상태 (2026-07-27)
+## 현재 상태 (2026-08-10)
 카메라 4대 연속 동기 수집은 **구현 완료**(실기 4대 수동 검증만 남음). 구성:
 - `capture`(`capture_node.py`): 단일 파이프라인 캡처 → `CompressedImage` 발행. **워밍업**
   (`warmup_s` 기본 4s: 프레임 폐기로 4대 정상 확인 후 첫 클린 사이클부터 발행 → 시작 프레임 수 일치).
@@ -24,6 +24,27 @@
   `check_lidar_bag.py`(매핑 전 `/unilidar/cloud` 사전점검+BEV PNG)). `ros2 bag play` 기반
   후처리라 **실시간 수집·녹화 코드와 완전 분리**. 산출물 = `map.pcd`+`trajectory.tum`(ego-pose,
   BEV 전제)+미리보기. 절차는 `docs/MAPPING.md`.
+  **뒷부분 잘림**: 재생은 realtime인데 노드가 못 따라가면 bag 뒤가 경고 없이 통째로 누락된다.
+  지금은 궤적이 안 커질 때까지 기다린 뒤 노드를 내린다(`DRAIN_MAX`, 기본 180s). 판정은
+  `run_info.txt`의 `traj_span_s` ≈ bag 길이.
+  **고립 노이즈 제거**: `mapping/pcd_denoise.py <out>/map.pcd` → 같은 폴더에 `map_clean.pcd`
+  (원본 보존). k-NN `d4>0.3m`인 **고립점만** 제거(실측 0.05~0.10%). 500점+ 대형 분리군집은
+  실구조물(raws3의 24,158점=천장)이라 "최대 군집만 남기기" 금지. 바닥은 희소해 우선 삭제되므로
+  `--protect-below p1` 아래는 임계를 3배 완화. PCD 바이너리 직접 read/write로 intensity 등 8필드
+  보존(open3d 경유 시 소실). `lio_map_bag.sh`가 자동 실행하지 않으니 따로 돌린다. `docs/MAPPING.md §6.6`.
+  **self mask**: `map.pcd`는 필터 없는 누적 원장(동적물체 제거·carving 전무)이라 카트를 끄는
+  수집자가 그대로 적립되고, 사람이 카트 뒤 0.85m를 따라오므로 **지나간 경로가 사람으로 덧칠**된다.
+  `pcd_save.self_mask_*`(unilidar_l2.yaml, 기본 ON: **축정렬 박스** x −1.5~−0.45·|y|<0.35·z<1.0)로
+  제거(잔재 −62%). **정합(ikd-Tree)에는 남기고 `map.pcd` 누적에서만 뺀다** — 라이다가 바닥을 못 봐
+  수직이 약한데 사람 점이 높이 기준 역할을 해서, 전처리에서 빼면 z 드리프트가 +0.19→+0.67m로
+  악화된다(재현 확인). **부채꼴 금지** — 통로가 좁아 좌우 0.33~0.58m에 실제 구조물이 있어 벽을
+  갉아먹는다. 같은 이유로 `blind` 키우기도 금지. 판정은 `mapping/check_self_points.py`
+  (궤적 거리 아닌 pose 바디프레임 박스 카운트, `--png`로 y-z 단면 검수뷰). 근거는 `docs/MAPPING.md §6.5`.
+  **260722 재매핑 완료(2026-08-10)** → `data/sj_bags/260722/maps_selfmask/`(7종, `map_clean.pcd` 포함).
+  잘림 0/7, 궤적 40.9~44.0m로 수렴, 코어 잔재 −61~−96%, 구 maps/에서 붕괴했던 rawos1·rawos3 복구.
+  **하류는 이 폴더를 쓴다.** 구 `data/sj_bags/260722/maps/`는 대조용 보관(`lidaronly_mapping`은 거기만 있음).
+  잔여 이슈: rawos 4종의 선형 z 경사(−0.9~−1.9m). 대부분 강체 기울기라 ego-local BEV 크롭에는
+  불일치분 ≈6cm만 남아 비치명적 — 라벨 생성 단계에서 처리. 상세 `docs/MAPPING.md §6.7`.
 - **캘리브레이션**(어안 4대 intrinsic + 카메라 간 extrinsic): Kalibr(arm64 Docker)로 실기 관통 검증 완료.
   도구 = `calibration/`(빌드·실행 스크립트, `aprilgrid.yaml`) + `kalibr_bridge`(세트→Kalibr 데이터셋)
   + `calib_convert`(camchain→`calib.yaml`). 절차·판정 기준·문제해결은 `docs/CALIBRATION.md`.
@@ -48,9 +69,11 @@
 - 순수 로직 테스트 25개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
   한 곳으로 모은다. 하위 구조:
-  - `data/sj_bags/<날짜>/{bags,maps}/` — 현장 원본 bag(`bags/`) + 그 bag의 Point-LIO 산출(`maps/<name>_mapping/`).
+  - `data/sj_bags/<날짜>/{bags,maps_selfmask}/` — 현장 원본 bag(`bags/`) + 그 bag의 Point-LIO 산출
+    (`maps_selfmask/<name>_mapping/` = self mask·drain 적용 현행판, `map.pcd`+`map_clean.pcd`+`trajectory.tum`).
+    260722에는 구버전 `maps/`도 대조용으로 남아 있다.
   - `data/extracted/<name>/` — bag별 추출 이미지(`frame_NNNNNN/cam{0..3}.jpg`+`sets.csv`). `<name>`: `raws{N}`=with-sun / `rawos{N}`=without-sun. bag↔map↔extracted를 같은 `<name>`으로 짝짓는다.
-  - `data/calib_260723/`(cam-cam 캘리브)·`data/cam-lidar_calib_260724/`(cam-LiDAR 캘리브)·`data/bev/{review,dataset}/`(BEV 검수뷰·데이터셋)·`data/_archive/`(폐기·임시 모음).
+  - `data/calib_260723/`(cam-cam 캘리브)·`data/cam-lidar_calib_260724/`(cam-LiDAR 캘리브)·`data/bev/{review,dataset,annotations}/`(BEV 검수뷰·데이터셋·CVAT 업로드 묶음)·`data/_archive/`(폐기·임시 모음).
   `third_party/point_lio_unilidar`(upstream 원본 클론)는 빌드에 안 쓰이며
   (매핑은 `src/point_lio` 사용) gitignore 처리됨.
 

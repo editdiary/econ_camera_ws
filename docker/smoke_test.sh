@@ -26,7 +26,7 @@ ok "imports"
 R "1. open3d 로 map.pcd 읽기"
 ./docker/run.sh python3 -c '
 import open3d as o3d, numpy as np
-p = o3d.io.read_point_cloud("data/sj_bags/260722/maps/raws1_mapping/map.pcd")
+p = o3d.io.read_point_cloud("data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd")
 a = np.asarray(p.points)
 print("points", a.shape, "bbox", a.min(0).round(2), a.max(0).round(2))
 assert len(a) > 1000
@@ -34,11 +34,11 @@ assert len(a) > 1000
 ok "open3d read_point_cloud"
 
 R "2. mapping/pcd_preview.py"
-./docker/run.sh python3 mapping/pcd_preview.py data/sj_bags/260722/maps/raws1_mapping/map.pcd "$OUT/pcd_preview"
+./docker/run.sh python3 mapping/pcd_preview.py data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd "$OUT/pcd_preview"
 ok "pcd_preview"
 
 R "3. mapping/bev_grid.py"
-./docker/run.sh python3 mapping/bev_grid.py data/sj_bags/260722/maps/raws1_mapping/map.pcd "$OUT/bev_grid"
+./docker/run.sh python3 mapping/bev_grid.py data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd "$OUT/bev_grid"
 ok "bev_grid"
 
 R "4. calib 시각 검증 (verify_undistort)"
@@ -48,7 +48,7 @@ ok "verify_undistort"
 
 R "5. BEV auto-label 단계1 (verify_labels) — open3d+cv2+scipy+DS 전 경로"
 ./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 verify_labels.py \
-    --map-dir ../../data/sj_bags/260722/maps/raws1_mapping \
+    --map-dir ../../data/sj_bags/260722/maps_selfmask/raws1_mapping \
     --extract-dir ../../data/extracted/raws1 \
     --calib ../../data/calib_260723/calib.yaml \
     --orient ../../data/calib_260723/orientation.json \
@@ -57,7 +57,7 @@ ok "verify_labels"
 
 R "6. BEV auto-label 단계2 (generate --limit 2) — IPM 포함"
 ./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 generate.py \
-    --map-dir ../../data/sj_bags/260722/maps/raws1_mapping \
+    --map-dir ../../data/sj_bags/260722/maps_selfmask/raws1_mapping \
     --extract-dir ../../data/extracted/raws1 \
     --calib ../../data/calib_260723/calib.yaml \
     --orient ../../data/calib_260723/orientation.json \

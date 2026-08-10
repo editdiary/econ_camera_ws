@@ -41,8 +41,8 @@ E 계층만 지우므로 그런 건 손대지 않는다 — z min 이 그대로 
 LIO 수직 드리프트인지는 고립도로 판별할 수 없는 별개 문제다.
 
 사용법:
-  python3 mapping/pcd_denoise.py data/sj_bags/260722/maps/raws1_mapping/map.pcd
-  python3 mapping/pcd_denoise.py data/sj_bags/260722/maps/*_mapping/map.pcd --dry-run
+  python3 mapping/pcd_denoise.py data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd
+  python3 mapping/pcd_denoise.py data/sj_bags/260722/maps_selfmask/*_mapping/map.pcd --dry-run
 """
 import argparse
 import pathlib
