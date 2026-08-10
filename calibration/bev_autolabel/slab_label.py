@@ -114,6 +114,26 @@ def camera_observable(spec, z_body, cams, T_cam_front, T_front_lidar, invalid,
     return ok_any.reshape(spec.NX, spec.NY)
 
 
+def self_box_mask(spec, near=0.4, far=2.1, yh=0.7):
+    """후방 self 박스: -far <= x <= -near 이고 |y| <= yh 인 셀 (NX,NY) bool. True=무효.
+
+    카트 손잡이(폭 실측 46cm)와 이를 밀며 따라오는 수집자(LiDAR 기준 약 60cm 후방)를 덮어
+    visibility 를 0 으로 만든다.
+
+    이미지 마스크가 아니라 body 프레임 박스로 처리하는 이유: 수집자는 화면을 확인하려 몸을
+    기울이고, 회전 구간에서 위치가 바뀌고, 턱에 걸려 흔들린다. 정적 이미지 마스크는 그 변동
+    앞에서 없는 자리를 가리고(데이터 손실) 있는 자리를 놓친다(틀린 라벨). 물리적 위치는
+    body 프레임에서 늘 같은 영역이다.
+
+    기본값은 실측으로 정했다. 이 박스(896셀, 6.2%)는 (1) handle·human 이미지 마스크가
+    죽이던 셀 143개(x −1.98~−0.98m, |y| 최대 0.68m)를 100% 포함하고, (2) Point-LIO
+    self mask 박스(x −1.5~−0.45, |y|<0.35)도 완전히 담는다 — 후자는 map_clean.pcd 에 남은
+    수집자 잔재(허위 obstacle)의 위치이며 이미지 마스크로는 고칠 수 없는 부분이다.
+    """
+    X, Y = cell_centers(spec)
+    return (X >= -far) & (X <= -near) & (np.abs(Y) <= yh)
+
+
 def assemble(obstacle, visible, camera_ok):
     """(occupancy, visibility) uint8. occupancy 0=obstacle 1=drivable,
     visibility 0=unseen 1=visible.

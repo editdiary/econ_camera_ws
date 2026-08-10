@@ -299,3 +299,24 @@ def test_load_self_masks_rejects_unknown_class(tmp_path):
     with pytest.raises(ValueError):
         slab_io.load_self_masks(str(tmp_path), use_names=("front",),
                                 classes=("nope",))
+
+
+def test_self_box_mask_bounds():
+    from bev_label import cell_centers
+    spec = BevSpec(XF=1.0, XR=1.0, YH=1.0)          # NX=NY=40
+    m = sl.self_box_mask(spec, near=0.2, far=0.6, yh=0.1)
+    X, Y = cell_centers(spec)
+    assert not m[X > -0.2].any()                     # near 보다 가까우면 제외
+    assert not m[X < -0.6].any()                     # far 보다 멀면 제외
+    assert not m[np.abs(Y) > 0.1].any()
+    assert m.sum() == 8 * 4                          # x 0.4m→8셀, |y|<=0.1→4셀
+
+
+def test_self_box_default_contains_pointlio_box():
+    from bev_label import cell_centers
+    spec = BevSpec(XF=4.0, XR=2.0, YH=3.0)           # 120x120
+    m = sl.self_box_mask(spec)
+    X, Y = cell_centers(spec)
+    pointlio = (X >= -1.5) & (X <= -0.45) & (np.abs(Y) < 0.35)
+    assert not (pointlio & ~m).any()                 # Point-LIO 잔재 영역을 전부 담는다
+    assert m.sum() == 896                            # 실측으로 정한 기본 박스 크기
