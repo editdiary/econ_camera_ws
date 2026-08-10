@@ -8,6 +8,7 @@ import os
 import sys
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 
@@ -47,12 +48,17 @@ def main():
     node = PoseLogger(out_path)
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # SIGINT 는 rclpy 시그널 핸들러가 먼저 context 를 내리므로 KeyboardInterrupt 가
+        # 아니라 ExternalShutdownException 으로 온다. 둘 다 정상 종료 경로다.
         pass
     finally:
-        node.get_logger().info(f"wrote {node._n} poses to {out_path}")
+        n = node._n
         node.destroy_node()
-        rclpy.shutdown()
+        # 로그도 shutdown 도 context 가 이미 내려간 뒤엔 실패한다 → print + ok() 확인
+        print(f"wrote {n} poses to {out_path}")
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
