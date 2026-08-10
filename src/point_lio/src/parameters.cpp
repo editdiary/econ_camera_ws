@@ -28,6 +28,16 @@ std::vector<double> gravity_init, gravity;
 std::vector<double> extrinT;
 std::vector<double> extrinR;
 bool runtime_pos_log, pcd_save_en, path_en, extrinsic_est_en = true;
+
+bool self_mask_en = false;
+double self_x_min = -1.5, self_x_max = -0.45, self_y_abs = 0.35, self_z_max = 1.0;
+
+bool in_self_mask(float x, float y, float z) {
+    return self_mask_en
+           && x > self_x_min && x < self_x_max
+           && fabs(y) < self_y_abs
+           && z < self_z_max;
+}
 bool scan_pub_en, scan_body_pub_en;
 shared_ptr<Preprocess> p_pre;
 double time_lag_imu_to_lidar = 0.0;
@@ -76,6 +86,11 @@ void readParameters(shared_ptr<rclcpp::Node> &nh) {
     nh->declare_parameter<double>("mapping.imu_meas_acc_cov", 0.1);
     nh->declare_parameter<double>("mapping.imu_meas_omg_cov", 0.1);
     nh->declare_parameter<double>("preprocess.blind", 1.0);
+    nh->declare_parameter<bool>("pcd_save.self_mask_en", false);
+    nh->declare_parameter<double>("pcd_save.self_x_min", -1.5);
+    nh->declare_parameter<double>("pcd_save.self_x_max", -0.45);
+    nh->declare_parameter<double>("pcd_save.self_y_abs", 0.35);
+    nh->declare_parameter<double>("pcd_save.self_z_max", 1.0);
     nh->declare_parameter<int>("preprocess.lidar_type", 1);
     nh->declare_parameter<int>("preprocess.scan_line", 16);
     nh->declare_parameter<int>("preprocess.scan_rate", 10);
@@ -136,6 +151,13 @@ void readParameters(shared_ptr<rclcpp::Node> &nh) {
     nh->get_parameter("mapping.imu_meas_acc_cov", imu_meas_acc_cov);
     nh->get_parameter("mapping.imu_meas_omg_cov", imu_meas_omg_cov);
     nh->get_parameter("preprocess.blind", p_pre->blind);
+    nh->get_parameter("pcd_save.self_mask_en", self_mask_en);
+    nh->get_parameter("pcd_save.self_x_min", self_x_min);
+    nh->get_parameter("pcd_save.self_x_max", self_x_max);
+    nh->get_parameter("pcd_save.self_y_abs", self_y_abs);
+    nh->get_parameter("pcd_save.self_z_max", self_z_max);
+    RCLCPP_INFO(nh->get_logger(), "self_mask(map.pcd 저장 전용): %s (x %.2f~%.2f, |y|<%.2f, z<%.2f m)",
+                self_mask_en ? "ON" : "off", self_x_min, self_x_max, self_y_abs, self_z_max);
     nh->get_parameter("preprocess.lidar_type", lidar_type);
     nh->get_parameter("preprocess.scan_line", p_pre->N_SCANS);
     nh->get_parameter("preprocess.scan_rate", p_pre->SCAN_RATE);

@@ -43,4 +43,10 @@ extern bool scan_pub_en, scan_body_pub_en;
 extern shared_ptr<Preprocess> p_pre;
 extern double time_lag_imu_to_lidar;
 
+// self mask — 카트를 끄는 수집자를 map.pcd 누적에서만 뺀다(정합에는 남긴다).
+// LiDAR(body) 좌표계의 축정렬 박스: x_min<x<x_max, |y|<y_abs, z<z_max.
+extern bool self_mask_en;
+extern double self_x_min, self_x_max, self_y_abs, self_z_max;
+bool in_self_mask(float x, float y, float z);
+
 void readParameters(shared_ptr<rclcpp::Node> &nh);

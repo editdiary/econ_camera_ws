@@ -550,14 +550,29 @@ void publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>:
     /* 2. noted that pcd save will influence the real-time performences **/
     if (pcd_save_en) {
         int size = feats_down_world->points.size();
-        PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
+        PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI());
+        laserCloudWorld->points.reserve(size);
 
+        // self mask 는 여기(저장)에만 건다. 정합/ikd-Tree 에는 그대로 남겨야 한다 —
+        // 이 라이다는 바닥을 못 봐서 수직이 약한데, 몸에 붙어 다니는 그 점들이 실측상
+        // 높이 기준 역할을 하고 있다(빼면 41m 주행에 z 드리프트 +0.19 -> +0.67 m).
+        // feats_down_body[i] 와 feats_down_world[i] 는 같은 점이다(pointBodyToWorld 가
+        // 인덱스 그대로 변환). 그래서 body 좌표로 판정하고 world 점을 버린다.
         for (int i = 0; i < size; i++) {
-            laserCloudWorld->points[i].x = feats_down_world->points[i].x;
-            laserCloudWorld->points[i].y = feats_down_world->points[i].y;
-            laserCloudWorld->points[i].z = feats_down_world->points[i].z;
-            laserCloudWorld->points[i].intensity = feats_down_world->points[i].intensity;
+            if (in_self_mask(feats_down_body->points[i].x,
+                             feats_down_body->points[i].y,
+                             feats_down_body->points[i].z)) {
+                continue;
+            }
+            PointType p;
+            p.x = feats_down_world->points[i].x;
+            p.y = feats_down_world->points[i].y;
+            p.z = feats_down_world->points[i].z;
+            p.intensity = feats_down_world->points[i].intensity;
+            laserCloudWorld->points.emplace_back(p);
         }
+        laserCloudWorld->width = laserCloudWorld->points.size();
+        laserCloudWorld->height = 1;
 
         *pcl_wait_save += *laserCloudWorld;
 

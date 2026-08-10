@@ -16,6 +16,7 @@
             timestamp_unit: 0           # the unit of time/t field in the PointCloud2 rostopic: 0-second, 1-milisecond, 2-microsecond, 3-nanosecond.
             blind: 0.5
 
+
         mapping:
             imu_en: true
             start_in_aggressive_motion: false # if true, a preknown gravity should be provided in following gravity_init
@@ -56,6 +57,22 @@
             scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame
 
         pcd_save:
+            # self mask — 카트를 끄는 수집자를 **map.pcd 누적에서만** 뺀다(LiDAR 좌표계 축정렬 박스).
+            #  정합/ikd-Tree 에는 남긴다: 이 라이다는 elevation 0~90° 라 바닥을 못 봐서 수직이
+            #  약한데, 몸에 붙어 다니는 그 점들이 실측상 높이 기준 역할을 하고 있다.
+            #  전처리에서 빼봤더니 41 m 주행에 z 드리프트 +0.19 -> +0.67 m 로 악화됐다(2회 재현).
+            #  260722 bag 실측: 후방에 |y|<=0.3, x -0.65~-0.92(p50 -0.80), z<=0.85 인 물체가
+            #  전 구간·전 bag 동일하게 붙어 다닌다 = 사람. 전방은 3.5~3.9 m 로 열려 있다.
+            #  **좌우는 손대지 않는다** — 좁은 통로라 0.33~0.58 m 에 실제 구조물이 있는 게 정상이고,
+            #  그 벽은 |y|>=0.35 부터 나타난다. 그래서 섹터(부채꼴)가 아니라 박스여야 한다.
+            #  부채꼴로 하면 yaw 150° 부근에서 벽까지 0.5/sin(30°)=1.0 m 라 벽 모서리를 갉아먹는다.
+            #  사람이 옆으로 걸은 구간이 남으면 self_y_abs 를, 더 붙어 걸었으면 self_x_max 를 조정.
+            self_mask_en: true
+            self_x_min: -1.5        # 이보다 뒤(더 먼 곳)는 건드리지 않음
+            self_x_max: -0.45       # x < self_x_max 만 대상(전방·측면은 무조건 보존)
+            self_y_abs: 0.35        # |y| < 0.35 (벽은 0.35 부터라 여기가 경계)
+            self_z_max: 1.0         # z < 1.0 (사람 머리 위는 실제 구조물)
+
             pcd_save_en: true       # save map to pcd file
             interval: -1            # how many LiDAR frames saved in each pcd file; 
                                         # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
