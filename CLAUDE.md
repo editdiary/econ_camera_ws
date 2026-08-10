@@ -45,7 +45,7 @@
   **BEV 범위는 CLI 옵션**(`--xf/--xr/--yh`, 기본 3.0/1.0/2.0 = 80×80; `RES`=0.05 고정) — 5m×5m는 `--xf 3.5 --xr 1.5 --yh 2.5`.
   국소 floor 윈도는 **ego 미터좌표에 고정**(격자 인덱스 기준이면 범위를 옮길 때 바닥 추정이 튀어 허위 obstacle 발생).
   IPM 다중카메라 합성은 기본 `nearest`(셀별 최근접 1대, 겹침 유령상 감소)·`--blend average` 선택 가능.
-- 순수 로직 테스트 18개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
+- 순수 로직 테스트 25개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
   한 곳으로 모은다. 하위 구조:
   - `data/sj_bags/<날짜>/{bags,maps}/` — 현장 원본 bag(`bags/`) + 그 bag의 Point-LIO 산출(`maps/<name>_mapping/`).
@@ -95,6 +95,7 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 
 ## 상세 문서
 - **전체 파이프라인(순차 따라하기)**: `docs/PIPELINE.md` (데이터 수집→매핑→캘리브→LiDAR/IPM auto-label→최종 검수까지 단계별 실행·옵션·산출물, 상세 문서 링크 허브)
+- **서버 후처리 환경(Docker)**: `docs/DOCKER.md` (수집 완료 데이터를 서버에서 가공. 단일 이미지 `econ-proc:humble`, colcon 빌드 불필요, `docker/{build,run,smoke_test}.sh`)
 - **사용 가이드**: `docs/USAGE.md` (녹화·모니터·bag 추출·파라미터·문제해결)
 - **문제해결**: `docs/TROUBLESHOOTING.md` (실기 운영 중 겪은 문제 사례별 정리)
 - **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)

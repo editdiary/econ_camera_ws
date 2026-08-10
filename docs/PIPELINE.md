@@ -49,6 +49,11 @@
 
 **무엇**: ROS2 Humble 호스트 네이티브 + 이 ws 빌드 + 선행 프로젝트 순수 로직 재사용.
 
+> **수집이 끝난 데이터를 서버에서 가공만 한다면** 이 절은 건너뛰고 [DOCKER.md](DOCKER.md)를 본다.
+> 3·5·6단계와 calib 검증은 **colcon 빌드 없이** 단일 Docker 이미지로 돌아간다
+> (후처리 스크립트는 `rosbag2_py`/`rclpy`를 지연 import 하는 평범한 파이썬이라 ROS 런타임만 있으면 된다).
+> 아래 호스트 네이티브 빌드가 필요한 건 **촬영(2단계)과 LIO 매핑(4단계)** 뿐이다.
+
 ```bash
 # 선행 프로젝트의 econ_cam(controls/stats) 재사용 — 복붙 아님, import
 pip install -e ../Multi-Cam_module_test

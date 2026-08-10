@@ -25,8 +25,6 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 
-from econ_cam import stats  # 동기 지표 재사용(capture_node 와 동일)
-
 _BOUNDARY = "frame"
 _FPS_WINDOW = 2.0   # 수신 fps 측정 창(초)
 _STAMP_RING = 10    # 동기 계산용 카메라별 최근 stamp 개수
@@ -121,6 +119,10 @@ class WebMonitorNode(Node):
             return self._latest.get(dev)
 
     def _status(self):
+        # econ_cam(선행 프로젝트) 지연 import — 촬영 시에만 필요하다. 모듈 상단에서 받으면
+        # econ_cam 이 없는 후처리 전용 환경(서버 Docker)에서 순수 로직 테스트까지 막힌다.
+        from econ_cam import stats  # 동기 지표 재사용(capture_node 와 동일)
+
         now = time.monotonic()
         with self._lock:
             recv = {d: list(q) for d, q in self._recv.items()}
