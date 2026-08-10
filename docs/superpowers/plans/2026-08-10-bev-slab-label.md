@@ -32,6 +32,7 @@
 | `calibration/bev_autolabel/slab_io.py` (신규) | 8필드 보존 PCD 읽기/부분쓰기, self 마스크 PNG 로드, 프레임 표본 로드 |
 | `calibration/bev_autolabel/slab_render.py` (신규) | `occupancy.png`·`visibility.png` 팔레트 저장, 4색 `review.png` |
 | `calibration/bev_autolabel/generate_slab.py` (신규) | CLI. 키프레임 순회 + 샘플 폴더 산출 + 요약 로그 |
+| `calibration/bev_autolabel/slab_sheet.py` (신규) | 사람이 눈으로 볼 검수 산출물: 궤적 전체 컨택트시트·채널 비교·샘플별 통계(`center_reach` 포함) |
 | `calibration/bev_autolabel/test_slab_label.py` (신규) | 순수 로직 테스트 |
 | `calibration/bev_autolabel/test_slab_render.py` (신규) | 렌더 테스트 |
 | `docs/BEV_AUTOLABEL.md` (수정) | §B 신설: 슬래브 라벨 실행 가이드 |
@@ -940,6 +941,7 @@ git commit -m "feat(bev): 슬래브 라벨 PNG 저장·4색 검수뷰 렌더"
 - Create: `calibration/bev_autolabel/generate_slab.py`
 - Modify: `calibration/bev_autolabel/slab_label.py` (`self_box_mask` 추가)
 - Modify: `calibration/bev_autolabel/test_slab_label.py` (`self_box_mask` 테스트 추가)
+- Create: `calibration/bev_autolabel/slab_sheet.py` (검수 시트·통계. 산출물은 `data/bev/slab_check/<name>/_sheet_review.png`·`_sheet_stack.png`·`_stats.txt`)
 
 **Interfaces:**
 - Consumes: Task 1~5 의 전부. `bev_io.load_stamps(extract_dir) -> {idx: stamp_ns}`, `bev_label.select_keyframes(stamps, times_ns, poses, kf_step) -> list[int]`, `cloud_io.pose_at(times_ns, poses, t_ns) -> (4,4)`, `chain.se3_inv`·`transform`, `ds_model.load_rig(calib, orient) -> CameraRig`(속성 `cams_by_name`·`T_cam_front`·`idx_to_name`), `calib_io.load_T_front_lidar(calib) -> (4,4)|None`
@@ -1301,33 +1303,47 @@ print('평균 %.2f%% 최대 %.2f%%'%(np.mean(bad),np.max(bad)))
 
 - [ ] **Step 8: 단계 3 검증 — visibility**
 
-`review.png` 를 눈으로 확인하고, 전방 중앙축 reach 를 잰다:
+> **주의 — 아래 reach 스크립트는 결함이 있었고 고쳤다.** 원래는 ego 인접행부터 끊김 없는
+> 사슬을 따라갔는데, 카메라가 수평을 봐서 반경 0.5m 는 아무 카메라도 못 본다. 그래서 ego
+> 인접행의 visibility 가 0 이고 사슬이 즉시 끊겨 **항상 reach=0** 이 나왔다(실측: 가시 영역이
+> 0.65~0.80m 에서 시작). 올바른 지표는 **중앙축에서 보이는 가장 먼 거리**다. 이 지표로 raws3
+> 전 구간 98샘플 중 83개(85%)가 4.0m 에 도달하고 87%가 3.0m 이상, 1.0m 미만은 2개다.
+> 계산은 `slab_sheet.py` 의 `center_reach()` 가 담당한다.
+
+**표본이 공정해야 한다.** `--limit 5` 는 bag 앞부분(넓은 입구)만 뽑으므로 통로 형태가 아니다 —
+이것으로 판정하면 안 된다. 전 구간을 돌린 뒤 통계와 컨택트시트로 본다.
+
 ```bash
-cd calibration/bev_autolabel && python3 -c "
-import json,glob,numpy as np
-from PIL import Image
-for d in sorted(glob.glob('/tmp/slab_check/raws3/sample_*')):
-    m=json.loads(open(d+'/meta.json').read()); b=m['bev']
-    vis=np.array(Image.open(d+'/visibility.png')).astype(bool)
-    cs=slice(b['C_EGO']-5,b['C_EGO']+6); col=vis[:b['R_EGO'],cs].any(1)
-    r=0
-    for k in range(b['R_EGO']-1,-1,-1):
-        if not col[k]: break
-        r=(b['R_EGO']-k)*b['RES']
-    print(d.split('/')[-1], 'reach %.2fm'%r, 'vis %.1f%%'%(vis.mean()*100),
-          'cam_ok %.1f%%'%m['stats']['camera_ok_pct'])
-"
+cd calibration/bev_autolabel && python3 generate_slab.py \
+  --map-dir ../../data/sj_bags/260722/maps_selfmask/raws3_mapping \
+  --extract-dir ../../data/extracted/raws3 \
+  --calib ../../data/calib_260723/calib.yaml \
+  --orient ../../data/calib_260723/orientation.json \
+  --self-mask-dir ../../data/calib_260723/self_mask \
+  --out ../../data/bev/slab_check/raws3
+python3 slab_sheet.py ../../data/bev/slab_check/raws3
 ```
-판정: `reach` 가 대부분 XF(4.0m)에 도달. `cam_ok` 가 96% 근처(self 마스크 없을 때) 또는
-더 낮음(있을 때). `review.png` 에서 초록 통로가 궤적 방향으로 뻗고, 좌우 벽이 빨강,
-벽 뒤가 갈색/검정이어야 한다.
+
+판정:
+- `reach_far` 중앙값이 XF(4.0m), 4.0m 도달이 80% 이상, 1.0m 미만이 소수(입구·출구 구간)
+- `cam_ok` 는 두 숫자를 구분해야 한다. 설계 스펙 §2.7 의 **96.0%** 는 *기하만*(이미지
+  마스크 없음, z=−0.87 평면) 잰 값이고, 이 CLI 실행(`--self-mask-dir` 로 table 마스크
+  적용)은 그 기하값에서 마스크만큼 더 깎여 **~93~95%** 가 정상이다. 100% 에 가까우면
+  투영 평면이 틀렸다는 신호다(body z=0 = 수평선 평면). `--ground-offset` 을 확인한다
+- `_sheet_review.png` 에서 중간 구간이 **초록 통로가 전방으로 뻗고 좌우에 갈색 벽, 벽 표면에
+  얇은 빨강**. ego 앞 검은 직사각형은 카메라 사각 반경 + 후방 self 박스로 정상이다
+
+실측 결과(raws3 98샘플, table 마스크 적용): `reach_far` 중앙 4.00m·최소 0.75m,
+4.0m 도달 83/98(85%), 3.0m 이상 87%, 1.0m 미만 2개. `cam_ok` 92.8~95.3%(기하만인
+설계 스펙 §2.7 의 96.0% 보다 낮은 게 정상 — table 마스크가 추가로 가린 만큼).
+obstacle 14.5~30.3%(중앙 22.2%). `z_ref` −0.073~+0.111(중앙 +0.048).
 
 - [ ] **Step 9: 커밋**
 
 ```bash
 git add calibration/bev_autolabel/generate_slab.py calibration/bev_autolabel/slab_label.py \
-       calibration/bev_autolabel/test_slab_label.py
-git commit -m "feat(bev): 슬래브 라벨 생성 CLI + 후방 마스크"
+       calibration/bev_autolabel/test_slab_label.py calibration/bev_autolabel/slab_sheet.py
+git commit -m "feat(bev): 슬래브 라벨 생성 CLI + self 박스 + 검수 시트"
 ```
 
 ---
@@ -1355,10 +1371,26 @@ for n in raws1 raws2 raws3 rawos1 rawos2 rawos3 rawos4; do
     --orient ../../data/calib_260723/orientation.json \
     --self-mask-dir ../../data/calib_260723/self_mask \
     --out ../../data/bev/slab/$n 2>&1 | tail -5
+  python3 slab_sheet.py ../../data/bev/slab/$n | tail -4
 done
 ```
-판정: 7개 전부 완주, 실패 샘플 0. `z_ref` 중앙값이 bag 간 +0.0~+0.1 로 일관.
-`obstacle` 중앙값 20~30%.
+판정: 7개 전부 완주, 실패 샘플 0(`skip (missing image)` 줄이 없어야 한다). bag 간 일관성은
+Task 6 이 raws3 로 세운 실측 기준선과 대조한다:
+
+| 항목 | raws3 기준선(98샘플) |
+|---|---|
+| `z_ref` 중앙 | +0.048 (범위 −0.073~+0.111) |
+| `obstacle` 중앙 | 22.2% (범위 14.5~30.3%) |
+| `cam_ok` | 92.8~95.3% |
+| `vis_start` | 0.65~0.80m |
+| `reach_far` 중앙 | 4.00m, 4.0m 도달 85% |
+
+`cam_ok` 가 100% 에 가까운 bag 이 있으면 투영 평면이 틀렸다는 신호다. rawos 계열은 world z
+드리프트가 크지만 body 프레임 crop 이 이를 상쇄하므로 `z_ref` 는 raws 와 같은 범위여야 한다 —
+벗어나면 그 bag 의 매핑을 의심한다.
+
+각 bag 의 `_sheet_review.png` 를 눈으로 확인한다. 중간 구간이 초록 통로 + 좌우 갈색 벽 형태여야
+하고, 입구·출구 구간(첫·마지막 몇 샘플)은 통로가 아니라 열린 공간이라 다르게 보이는 것이 정상이다.
 
 - [ ] **Step 2: 요약표를 만든다**
 
@@ -1399,15 +1431,26 @@ for p in sorted(glob.glob('../../data/bev/slab/*/dataset.csv')):
 
 ### 산출물
 
-    sample_NNNNNN/{slab.pcd, crop.pcd(--save-crop), occupancy.png,
-                   visibility.png, review.png, meta.json} + dataset.csv
+    sample_NNNNNN/{slab.pcd, crop.pcd(--save-crop), occupancy.png, visibility.png,
+                   review.png, cam_{front,left,right}.jpg, meta.json} + dataset.csv
+
+검수 산출물은 `slab_sheet.py` 로 따로 만든다(생성 CLI 가 자동 실행하지 않는다):
+
+    cd calibration/bev_autolabel && python3 slab_sheet.py ../../data/bev/slab/raws3
+
+→ 같은 폴더에 `_sheet_review.png`(궤적 전체 15장 격자)·`_sheet_stack.png`(occupancy/
+visibility/review 나란히)·`_stats.txt`(샘플별 z_ref·obstacle·visible·cam_ok·reach).
 
 `occupancy.png` = 0 obstacle / 1 drivable. `visibility.png` = 0 unseen / 1 visible.
 학습에서 visibility 를 loss 마스크로 쓰면 미관측 영역이 자동 배제된다. occupancy 에
 unknown 클래스를 두지 않는 이유가 이것이다.
 
-`review.png` 4색: 초록=보이는 drivable(신뢰 영역), 빨강=보이는 장애물 표면,
-갈색=가려진 장애물, 검정=미관측.
+`review.png` 는 **상단에 원본 3어안(left/front/right) 스트립** + 하단에 BEV 4색이다.
+4색: 초록=보이는 drivable(신뢰 영역), 빨강=보이는 장애물 표면, 갈색=가려진 장애물, 검정=미관측.
+원본과 BEV 를 한 장에서 대조할 수 있어야 라벨이 진짜 맞는지 사람이 판단할 수 있다.
+
+ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바깥을 봐서 생기는 근거리 사각
+(실측 가시 시작 0.65~0.80m)과 후방 self 박스가 합쳐진 것이다.
 
 ### 파이프라인
 
@@ -1446,7 +1489,8 @@ unknown 클래스를 두지 않는 이유가 이것이다.
 | `z_ref` | bag·위치와 무관하게 +0.0~+0.1 |
 | obstacle 셀 | 20~30% |
 | 궤적셀이 obstacle 인 비율 | < 2% (라벨이 실제 주행과 모순되지 않는지) |
-| 전방 중앙축 reach | XF 도달 |
+| 중앙축 `reach_far` | 중앙값 XF 도달, 4.0m 도달 80% 이상 (`slab_sheet.py` 가 계산) |
+| `cam_ok` | 93~95%. 100% 에 가까우면 투영 평면이 틀렸다는 신호 |
 
 ### 하지 말 것
 
@@ -1486,7 +1530,7 @@ unknown 클래스를 두지 않는 이유가 이것이다.
 cd src/econ_camera_ros && python3 -m pytest test/ -q
 cd ../../calibration/bev_autolabel && python3 -m pytest -q
 ```
-Expected: 기존 25개 + 새 테스트 전부 PASS
+Expected: `src/econ_camera_ros` 기존 25개 PASS + `calibration/bev_autolabel` 35개 PASS
 
 ```bash
 git add docs/BEV_AUTOLABEL.md CLAUDE.md

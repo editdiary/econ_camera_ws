@@ -37,11 +37,37 @@ def four_color(occupancy, visibility):
     return out
 
 
-def review_png(occupancy, visibility, spec, scale=6):
-    """4색 확대 + 0.5m 격자 + ego 마커 + 전방 화살표.
+def _camera_strip(cam_imgs, width, order=("left", "front", "right")):
+    """review_png 상단에 붙일 카메라 가로 배치. 폭 width 에 맞춰 등분·이름표. 없으면 None.
+
+    render.py 의 review_overlay/_camera_row 와 같은 방식(3등분 리사이즈 + 라벨)이지만
+    slab_render 는 render.py 를 참조하지 않고 독립적으로 유지한다.
+    """
+    names = [n for n in order if cam_imgs.get(n) is not None]
+    if not names:
+        return None
+    cw = width // len(names)
+    row = []
+    for n in names:
+        im = cam_imgs[n]
+        r = cv2.resize(im, (cw, int(cw * im.shape[0] / im.shape[1])))
+        cv2.putText(r, n, (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        row.append(r)
+    top = np.hstack(row)
+    if top.shape[1] != width:
+        top = cv2.resize(top, (width, top.shape[0]))
+    return top
+
+
+def review_png(occupancy, visibility, spec, scale=6, cam_imgs=None):
+    """4색 확대 + 0.5m 격자 + ego 마커 + 전방 화살표. cam_imgs 주면 상단에 원본 3어안을 붙인다.
 
     격자선 위치는 미터좌표 기준으로 잡는다 — 격자 좌상단 기준이면 XF/YH 가 0.5 배수가
     아닐 때 선과 미터 라벨이 어긋나 거리를 잘못 읽는다.
+
+    cam_imgs={name: BGR ndarray} 는 선택 인자다 — 안 주면(기본값 None) 기존과 똑같이
+    BEV 만 반환한다. 라벨만 봐서는 실제로 맞는 라벨인지 판단하기 어렵다는 사용자 피드백에
+    따라 원본 이미지를 나란히 붙여 사람이 한 장으로 대조할 수 있게 한다.
     """
     img = cv2.resize(four_color(occupancy, visibility),
                      (spec.NY * scale, spec.NX * scale),
@@ -64,4 +90,8 @@ def review_png(occupancy, visibility, spec, scale=6):
     cv2.circle(img, (ex, ey), max(2, scale // 2), _C_EGO, -1)
     cv2.arrowedLine(img, (ex, ey), (ex, max(0, ey - 6 * scale)), _C_EGO, 1,
                     tipLength=0.3)
+    if cam_imgs:
+        top = _camera_strip(cam_imgs, W)
+        if top is not None:
+            img = np.vstack([top, img])
     return img

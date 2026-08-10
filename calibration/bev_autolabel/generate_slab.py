@@ -136,6 +136,10 @@ def main():
     rows = []
     for n, idx in enumerate(kf):
         t_ns = stamps[idx]
+        imgs = bev_io.load_cam_images(a.extract_dir, idx, rig.idx_to_name, USE)
+        if any(imgs[name] is None for name in USE):
+            print(f"skip (missing image) frame_idx={idx}")
+            continue
         T_wb = pose_at(times_ns, poses, t_ns)
         ctr = T_wb[:3, 3]
         near = np.flatnonzero((np.abs(xyz[:, 0] - ctr[0]) < reach)
@@ -162,13 +166,16 @@ def main():
 
         sd = out / f"sample_{n:06d}"
         sd.mkdir(exist_ok=True)
+        for name in USE:
+            cv2.imwrite(str(sd / f"cam_{name}.jpg"), imgs[name])
         slab_io.write_points(sd / "slab.pcd", head, arr, slab_idx, slab_P)
         if a.save_crop:
             slab_io.write_points(sd / "crop.pcd", head, arr, crop_idx, crop_P)
         sr.save_indexed(sd / "occupancy.png", occupancy, sr.PALETTE_OCC)
         sr.save_indexed(sd / "visibility.png", visibility, sr.PALETTE_VIS)
         cv2.imwrite(str(sd / "review.png"),
-                    sr.review_png(occupancy, visibility, spec, scale=a.review_scale))
+                    sr.review_png(occupancy, visibility, spec, scale=a.review_scale,
+                                  cam_imgs=imgs))
         stats = {"crop_pts": int(len(crop_P)), "slab_pts": int(len(slab_P)),
                  "obstacle_pct": float(obstacle.mean() * 100),
                  "visible_pct": float((visibility == 1).mean() * 100),
