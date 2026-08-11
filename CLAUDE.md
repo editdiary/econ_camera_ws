@@ -54,33 +54,37 @@
   수동 2D-3D 대응점 클릭 + DS-PnP). 카메라 간 extrinsic 체인에 라이다를 한 단으로 붙인다.
   절차·판정 기준은 `docs/CAM_LIDAR_CALIBRATION.md`. 순수 로직 테스트 통과, 실기(정지 촬영·
   대응점 클릭·solve RMS·오버레이 검증)만 남음.
-- **BEV auto-label**(3어안→BEV occupancy 학습 정답 자동생성): 파이프라인 CLI 구현 완료
-  (`calibration/bev_autolabel/`: 수직성 obstacle+국소floor / 카메라 FoV∩가림 observed / 정밀 ego(0.28m) /
-  corridor 무조건 drivable). 단계1 `verify_labels.py`(검수 PNG) + 단계2 `generate.py`(LiDAR 라벨 **+ 3어안 IPM
-  지면투영 RGB 캔버스 + 라벨 오버레이 검수뷰** 일괄 생성, `ipm.py`). LiDAR가 바닥을 못 보므로 바닥 모습은 IPM으로 보완.
-  **사람은 카메라 마스킹 없이 IPM 배경 위 라벨을 BEV에서 보정만** 함 → 옛 마스킹 경로(`ipm_review`·`dataset_flatten`) 폐기.
-  각 sample에 `overlay.png`(ipm_rgb+라벨 오버레이, **네이티브 해상도·장식 없음**=CVAT 라벨링 base, resize 왕복 없음) 저장.
-  단계3 `gather_annotations.py`(dataset→`data/bev/annotations/<name>/` 하나에 하위 `label/`(CVAT 업로드용, 해상도는 dataset `meta.json` 따름)·
-  `review/`(참고용 확대 검수뷰, 원본 3어안+BEV, `--review-scale` 기본18)로 나눠 모음). 격자·ego 등 장식은 review로만(base엔 없음).
-  raws3 + 타 bag 4종 검증. 실행법·변경사항은 `docs/BEV_AUTOLABEL.md §A`. 순수 테스트 34개.
-  **BEV 범위는 CLI 옵션**(`--xf/--xr/--yh`, 기본 3.0/1.0/2.0 = 80×80; `RES`=0.05 고정) — 5m×5m는 `--xf 3.5 --xr 1.5 --yh 2.5`.
-  국소 floor 윈도는 **ego 미터좌표에 고정**(격자 인덱스 기준이면 범위를 옮길 때 바닥 추정이 튀어 허위 obstacle 발생).
-  IPM 다중카메라 합성은 기본 `nearest`(셀별 최근접 1대, 겹침 유령상 감소)·`--blend average` 선택 가능.
-  **슬래브 라벨(LiDAR 라벨 현행판)**: `slab_label.py`+`slab_io.py`+`slab_render.py`+`generate_slab.py`
-  +`gather_slab.py`(단계3 대응. **`gather_annotations.py`는 슬래브에 안 먹는다** — `label.png`를 요구하는데 없다.
-  `overlay.png`=**obstacle만** 얹은 CVAT base 라 합성 없이 바이트 그대로 복사해 모은다. 보정 대상은 occupancy 하나뿐,
-  visibility 는 보정본 raycast 로 재생성)
+- **BEV auto-label**(3어안→BEV occupancy 학습 정답 자동생성), `calibration/bev_autolabel/`.
+  **현행판 = 슬래브 라벨**(`docs/BEV_AUTOLABEL.md §B`). 구성: `slab_label.py`(순수 로직)+`slab_io.py`
+  +`slab_render.py`+`generate_slab.py`(생성 CLI)+`slab_sheet.py`(검수 시트)+`gather_slab.py`(검수용 모음).
+  재사용: `bev_label.raycast_visible`·`ipm.py`. 패키지 테스트 84개.
   → `data/bev/slab/<name>/sample_NNNNNN/{slab.pcd,occupancy.png,visibility.png,ipm_rgb.png,overlay.png,
   review.png,cam_{front,left,right}.jpg,meta.json}`. **기본 `--xf 4.0 --xr 2.0 --yh 3.0` = 120×120**
-  — §A(`generate.py`)의 80×80과 **다른 그리드**이니 한 데이터셋에 섞지 말 것.
+  (`RES`=0.05 고정) — 구판(`generate.py`)의 80×80과 **다른 그리드**이니 한 데이터셋에 섞지 말 것.
   map_clean.pcd 에서 body 프레임 3D crop → 하위1% z 부터 0.8m 슬래브 → 2D 기둥 count≥3
-  occupancy + (2D raycast ∧ 카메라 관측가능성 ∧ ¬self박스) visibility. 옛 `label.png`(0/1/2) 대체.
+  occupancy(0=obstacle/1=drivable) + (2D raycast ∧ 카메라 관측가능성 ∧ ¬self박스)
+  visibility(0=unseen/1=visible). 옛 단일 `label.png`(0/1/2) 대체 — visibility 를 loss 마스크로
+  쓰므로 occupancy 에 unknown 클래스를 안 둔다.
+  LiDAR가 바닥을 못 보므로 바닥 모습은 IPM으로 보완. **사람은 카메라 마스킹 없이 IPM 배경 위
+  라벨을 BEV에서 보정만** 함 → 옛 마스킹 경로(`ipm_review`·`dataset_flatten`) 폐기.
+  `overlay.png`=ipm_rgb 위에 **obstacle만** alpha 0.30 으로 얹은 **네이티브 해상도·장식 없는**
+  CVAT 라벨링 base(격자·ego 등 장식은 `review.png`로만). 단계3 `gather_slab.py` 가
+  `data/bev/annotations/<name>/{label,review}/` 로 **바이트 그대로 복사**해 모은다(재인코딩하면
+  정답 base 화소가 바뀐다). **보정 대상은 occupancy 하나뿐** — visibility 는 보정본 raycast 로 재생성.
+  **`gather_annotations.py`는 슬래브에 안 먹는다** — `label.png`를 요구하는데 없어 `done: 0 images`.
+  `--kf-step` 은 단일값 외에 **구간별 스케줄**을 받는다(`0:0.5,0.2:1.5,0.7:0.5` = 누적 이동거리
+  0~20%/20~70%/70~100% 를 0.5/1.5/0.5m 간격. sample 번호는 전 구간 연속).
   카메라가 수평을 봐서 실제 지면에서 반경 0.5m 완전 사각·1.0m 부분 사각이다. 카트 자기 가림은
   둘로 나눠 처리: **상판·받침판은 이미지 마스크**(`data/calib_260723/self_mask/`, 클래스 색 PNG,
   기본 `table` 만) + **손잡이·수집자는 body 프레임 self 박스**(기본 x −2.1~−0.4·|y|≤0.7, 896셀)
   — 사람의 이미지 위치가 프레임마다 달라 정적 마스크로는 못 맞히기 때문. 어안 원 바깥은 자동 검출.
   금지: 3D raycast·min_pts≥10·pct=5·corridor prior 부활·ground_offset=0·handle/human 을
-  self-mask-classes 에 넣기. `docs/BEV_AUTOLABEL.md §B`.
+  self-mask-classes 에 넣기. 7개 bag 검증 완료.
+  **구판(2026-07, 보관)**: 단계1 `verify_labels.py` + 단계2 `generate.py`(수직성 obstacle+국소floor /
+  카메라 FoV∩가림 observed / 정밀 ego(0.28m) / **corridor 무조건 drivable**) + 단계3
+  `gather_annotations.py`, 단일 `label.png`(0/1/2)·기본 80×80. LiDAR 라벨은 §B 가 대체했으므로
+  **새 데이터 생성에 쓰지 않는다** — `data/bev/dataset/` 의 기존 산출물 해석용으로만 남긴다.
+  `docs/BEV_AUTOLABEL.md 부록 A`.
 - 순수 로직 테스트 25개 통과(`cd src/econ_camera_ros && python3 -m pytest test/`).
 - **폴더**: 수집 bag·추출 이미지·캘리브/LIO 산출물 등 모든 데이터·산출물은 `data/`(gitignore)
   한 곳으로 모은다. 하위 구조:
@@ -139,7 +143,7 @@ e-con AR0234 4-camera 모듈용 **ROS2 연속 수집 패키지**. 4대를 하드
 - **캘리브레이션 가이드**: `docs/CALIBRATION.md` (촬영법·Kalibr 실행·결과 판정·calib.yaml·문제해결)
 - **Cam-LiDAR 캘리브 가이드**: `docs/CAM_LIDAR_CALIBRATION.md` (T_front_lidar, 수동 2D-3D 대응+DS-PnP, 정지 1단계·모션보정 2단계)
 - **매핑 가이드**: `docs/MAPPING.md` (오프라인 LIO 실행·산출물·시각화·판정)
-- **BEV 자동라벨 파이프라인**: `docs/BEV_AUTOLABEL.md` (3어안→BEV occupancy 학습용 auto-label; 규격·단계·특이사항·**§A 실행 가이드(CLI)**. PoC·CLI 구현 완료 `calibration/bev_autolabel/`, 다중 bag 검증)
+- **BEV 자동라벨 파이프라인**: `docs/BEV_AUTOLABEL.md` (3어안→BEV occupancy 학습용 auto-label; 규격·단계·특이사항·**§B 슬래브 라벨 = 현행 실행 가이드**, 구판은 부록 A. `calibration/bev_autolabel/`, 7개 bag 검증)
 - 설계 스펙(BEV auto-label 품질개선): `docs/superpowers/specs/2026-07-27-bev-autolabel-quality-improvement-design.md`
 - 구현 계획(BEV auto-label): `docs/superpowers/plans/2026-07-27-bev-autolabel-quality-improvement.md`
 - 설계 스펙(매핑): `docs/superpowers/specs/2026-07-20-lio-mapping-integration-design.md`

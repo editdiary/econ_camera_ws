@@ -33,7 +33,7 @@ cd ~/Desktop/econ_camera_ws     # 서버 경로: /data/home/dhlee/Desktop/econ_c
 ```bash
 ./docker/run.sh                                     # 대화형 셸
 ./docker/run.sh python3 mapping/pcd_preview.py data/sj_bags/260722/maps_selfmask/raws1_mapping/map.pcd
-./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 generate.py ...'
+./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 generate_slab.py ...'
 ```
 
 `run.sh`가 하는 일은 셋뿐이다:
@@ -77,13 +77,20 @@ pip의 numpy 1.26은 `/usr/local/lib/python3.10/dist-packages`에 깔려 시스�
 **된다**
 
 ```bash
-# BEV auto-label — 검수뷰(단계1) / 데이터셋 생성(단계2) / CVAT용 수집(단계3)
-./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 verify_labels.py \
+# BEV auto-label(현행 = 슬래브 라벨) — 생성 → 검수 시트 → CVAT용 수집
+./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 generate_slab.py \
     --map-dir ../../data/sj_bags/260722/maps_selfmask/raws1_mapping \
     --extract-dir ../../data/extracted/raws1 \
     --calib ../../data/calib_260723/calib.yaml \
     --orient ../../data/calib_260723/orientation.json \
-    --frames 900 2000 --out ../../data/bev/review/raws1'
+    --self-mask-dir ../../data/calib_260723/self_mask \
+    --out ../../data/bev/slab/raws1'
+./docker/run.sh python3 calibration/bev_autolabel/slab_sheet.py data/bev/slab/raws1
+./docker/run.sh python3 calibration/bev_autolabel/gather_slab.py \
+    --dataset data/bev/slab/raws1 --out data/bev/annotations
+
+# 구판 경로(verify_labels/generate/gather_annotations)도 그대로 돈다 — 의존성이 같다.
+# docker/smoke_test.sh 가 검증하는 건 아직 이 구판 경로다(BEV_AUTOLABEL 부록 A).
 
 # calib.yaml 시각 검증
 ./docker/run.sh python3 calibration/verify/verify_undistort.py \
