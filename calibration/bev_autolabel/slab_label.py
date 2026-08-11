@@ -144,3 +144,52 @@ def assemble(obstacle, visible, camera_ok):
     occupancy = np.where(np.asarray(obstacle), 0, 1).astype(np.uint8)
     visibility = (np.asarray(visible) & np.asarray(camera_ok)).astype(np.uint8)
     return occupancy, visibility
+
+
+def parse_kf_schedule(text):
+    """'0.4' → ((0.0, 0.4),) / '0:0.5,0.2:1.5,0.7:0.5' → 구간별 (시작비율, step[m]).
+
+    시작비율은 **누적 이동거리** 기준 [0,1) 이고 오름차순이어야 하며 첫 구간은 0 에서
+    시작해야 한다 — 아니면 앞부분이 통째로 빠지는데 이건 오타일 가능성이 높다.
+    """
+    text = str(text).strip()
+    if ":" not in text:
+        step = float(text)
+        if step <= 0:
+            raise ValueError(f"kf-step 은 0 보다 커야 합니다: {text}")
+        return ((0.0, step),)
+    out = []
+    for part in text.split(","):
+        kv = part.split(":")
+        if len(kv) != 2:
+            raise ValueError(f"kf-step 구간은 '시작비율:step' 형식입니다: {part!r}")
+        frac, step = float(kv[0]), float(kv[1])
+        if not 0.0 <= frac < 1.0:
+            raise ValueError(f"시작비율은 0 이상 1 미만: {frac}")
+        if step <= 0:
+            raise ValueError(f"step 은 0 보다 커야 합니다: {step}")
+        if out and frac <= out[-1][0]:
+            raise ValueError(f"시작비율은 오름차순이어야 합니다: {text}")
+        out.append((frac, step))
+    if out[0][0] != 0.0:
+        raise ValueError(f"첫 구간은 0 에서 시작해야 합니다: {text}")
+    return tuple(out)
+
+
+def schedule_segments(order, positions, schedule):
+    """프레임 순서 order 를 스케줄 구간별로 자른다 → [(부분 order, step), ...].
+
+    경계 기준은 **누적 이동거리 비율**이다 — 프레임 순번이면 정지·서행 구간에서 경계가
+    공간상 앞으로 밀린다. 프레임이 하나도 없는 구간은 빼고 반환한다.
+    """
+    P = np.asarray(positions, float)
+    cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+    frac = cum / cum[-1] if cum[-1] > 0 else np.zeros(len(cum))
+    idx = np.asarray(order)
+    bounds = [f for f, _ in schedule][1:] + [np.inf]
+    segs = []
+    for (f0, step), f1 in zip(schedule, bounds):
+        sub = idx[(frac >= f0) & (frac < f1)].tolist()
+        if sub:
+            segs.append((sub, step))
+    return segs

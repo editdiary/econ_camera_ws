@@ -320,3 +320,62 @@ def test_self_box_default_contains_pointlio_box():
     pointlio = (X >= -1.5) & (X <= -0.45) & (np.abs(Y) < 0.35)
     assert not (pointlio & ~m).any()                 # Point-LIO 잔재 영역을 전부 담는다
     assert m.sum() == 896                            # 실측으로 정한 기본 박스 크기
+
+
+def test_parse_kf_schedule_plain_float_is_one_segment():
+    """기존 --kf-step 0.4 는 그대로 동작해야 한다(전 구간 단일 step)."""
+    assert sl.parse_kf_schedule("0.4") == ((0.0, 0.4),)
+    assert sl.parse_kf_schedule(0.4) == ((0.0, 0.4),)
+
+
+def test_parse_kf_schedule_reads_segments():
+    assert sl.parse_kf_schedule("0:0.5,0.2:1.5,0.7:0.5") == (
+        (0.0, 0.5), (0.2, 1.5), (0.7, 0.5))
+
+
+@pytest.mark.parametrize("bad", [
+    "0.2:0.5,0.7:1.5",      # 첫 구간이 0 에서 시작하지 않음 → 앞부분이 통째로 빠진다
+    "0:0.5,0.7:1.5,0.2:0.5",  # 시작비율 역순
+    "0:0.5,0.5:0",          # step 0
+    "0:0.5,1.0:1.5",        # 시작비율 1.0 은 빈 구간
+    "0:0.5,0.5",            # 형식 오류
+])
+def test_parse_kf_schedule_rejects_bad_input(bad):
+    with pytest.raises(ValueError):
+        sl.parse_kf_schedule(bad)
+
+
+def _line_positions(n, d=1.0):
+    return np.stack([np.arange(n) * d, np.zeros(n), np.zeros(n)], 1)
+
+
+def test_schedule_segments_splits_by_travelled_distance():
+    """경계는 누적 이동거리 비율이다 — 프레임 순번이 아니라."""
+    order = list(range(11))                       # 0~10m 를 1m 씩
+    segs = sl.schedule_segments(order, _line_positions(11),
+                                ((0.0, 0.5), (0.3, 1.5), (0.7, 0.5)))
+    assert [s for _, s in segs] == [0.5, 1.5, 0.5]
+    assert [o for o, _ in segs] == [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9, 10]]
+
+
+def test_schedule_segments_uses_distance_not_frame_count():
+    """앞에서 제자리 프레임이 많아도 경계는 공간상 중앙에 온다."""
+    pos = np.stack([np.r_[np.zeros(20), np.arange(1, 11)],
+                    np.zeros(30), np.zeros(30)], 1)   # 20프레임 정지 후 10m 이동
+    segs = sl.schedule_segments(list(range(30)), pos, ((0.0, 0.5), (0.5, 1.5)))
+    # 프레임 24 가 딱 5m(=50%) 지점이고 경계는 아래쪽이 열려 있어 다음 구간에 들어간다
+    assert segs[0][0] == list(range(24))              # 정지 20프레임 + 1~4m
+    assert segs[1][0] == list(range(24, 30))
+
+
+def test_schedule_segments_single_segment_keeps_every_frame():
+    order = list(range(11))
+    segs = sl.schedule_segments(order, _line_positions(11), ((0.0, 0.4),))
+    assert segs == [(order, 0.4)]
+
+
+def test_schedule_segments_drops_empty_segment():
+    """이동이 짧아 구간에 프레임이 없으면 그 구간은 빠진다(빈 호출 방지)."""
+    pos = np.stack([np.r_[0.0, 10.0], np.zeros(2), np.zeros(2)], 1)
+    segs = sl.schedule_segments([0, 1], pos, ((0.0, 0.5), (0.3, 1.5), (0.9, 0.5)))
+    assert [o for o, _ in segs] == [[0], [1]]

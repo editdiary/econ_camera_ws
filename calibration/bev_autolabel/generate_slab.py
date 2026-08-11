@@ -102,7 +102,10 @@ def main():
                     help="후방 self 박스 근단[m]. 박스 = -far <= x <= -near, |y| <= yh")
     ap.add_argument("--self-box-far", type=float, default=2.1)
     ap.add_argument("--self-box-yh", type=float, default=0.7)
-    ap.add_argument("--kf-step", type=float, default=0.4)
+    ap.add_argument("--kf-step", default="0.4",
+                    help="키프레임 간격[m]. 단일값(0.4) 또는 구간별 스케줄 "
+                         "'시작비율:step,...'(예: 0:0.5,0.2:1.5,0.7:0.5). 시작비율은 "
+                         "누적 이동거리 기준")
     ap.add_argument("--save-crop", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--review-scale", type=int, default=6)
@@ -129,7 +132,23 @@ def main():
 
     head, arr, xyz, times_ns, poses = slab_io.load_map(a.map_dir)
     stamps = bev_io.load_stamps(a.extract_dir)
-    kf = select_keyframes(stamps, times_ns, poses, kf_step=a.kf_step)
+    try:
+        sched = sl.parse_kf_schedule(a.kf_step)
+    except ValueError as e:
+        sys.exit(f"--kf-step: {e}")
+    if len(sched) == 1:
+        kf = select_keyframes(stamps, times_ns, poses, kf_step=sched[0][1])
+    else:
+        # 구간별로 stamps 를 잘라 select_keyframes 를 따로 돌린다. 구간 경계에서는
+        # 직전 키프레임 기억이 끊기므로 step 보다 가까운 쌍이 경계마다 하나 생길 수 있다.
+        order = sorted(stamps)
+        pos = np.array([pose_at(times_ns, poses, stamps[i])[:3, 3] for i in order])
+        kf = []
+        for sub, step in sl.schedule_segments(order, pos, sched):
+            part = select_keyframes({i: stamps[i] for i in sub}, times_ns, poses,
+                                    kf_step=step)
+            print(f"  구간 step={step}m: 프레임 {len(sub)} → 키프레임 {len(part)}")
+            kf += part
     if a.limit:
         kf = kf[:a.limit]
     print(f"map={len(xyz)} poses={len(poses)} keyframes={len(kf)}")

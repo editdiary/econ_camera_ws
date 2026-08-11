@@ -311,6 +311,10 @@ python3 generate.py \
 > `[4color(occ+vis) | ipm+occupancy]` 두 패널). 상세·판정 기준·알려진 한계(visibility 수율)는
 > [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md).
 >
+> **`--kf-step` 은 §B 에서만 구간별 스케줄을 받는다**: `--kf-step 0:0.5,0.2:1.5,0.7:0.5`
+> = 누적 이동거리 0~20% 는 0.5m, 20~70% 는 1.5m, 70~100% 는 0.5m 간격. 단조로운 중반부를
+> 성기게, 변화가 많은 앞뒤를 촘촘히 뽑을 때 쓴다. §A 의 `generate.py` 는 단일값만 받는다.
+>
 > **6단계는 `gather_slab.py`를 쓴다** — `gather_annotations.py`가 아니다. 그 스크립트는
 > `label.png`(0/1/2 인덱스)를 요구하는데 슬래브 산출물엔 없어(`occupancy.png`+`visibility.png`로
 > 분리) 전 sample이 `skip (missing ipm_rgb/label)`로 건너뛰어지고 `done: 0 images`로 끝난다.
