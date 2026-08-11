@@ -308,16 +308,21 @@ python3 generate.py \
 >
 > 산출물은 `occupancy.png`(0=obstacle/1=drivable)·`visibility.png`(0=unseen/1=visible)·
 > `ipm_rgb.png`(IPM RGB 캔버스)·`overlay.png`(네이티브 해상도 CVAT base)·`review.png`(카메라 행 +
-> `[4color(occ+vis) | ipm+label]` 두 패널). 상세·판정 기준·알려진 한계(visibility 수율)는
+> `[4color(occ+vis) | ipm+occupancy]` 두 패널). 상세·판정 기준·알려진 한계(visibility 수율)는
 > [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md).
 >
-> **6단계(최종 확정)는 슬래브 출력에 그대로 적용되지 않는다.** `gather_annotations.py`는
-> `label.png`(0/1/2 인덱스)를 요구하는데 슬래브 산출물엔 없다(`occupancy.png`+`visibility.png`로
-> 분리) — 전 sample이 `skip (missing ipm_rgb/label)`로 건너뛰어지고 `done: 0 images`로 끝난다.
-> **`occupancy.png`를 `render.blend_label`에 넣지 말 것** — `visibility=0`(미관측) 셀까지 칠해
-> 모르는 영역을 아는 것처럼 보이는 CVAT base가 된다. 슬래브 데이터셋의 annotation base는 이미
-> 가시성으로 게이팅된 `overlay.png`이며, 전용 gather 스크립트 없이 각 `sample_*/overlay.png`를
-> 업로드 폴더로 복사해서 모은다. 상세는 [BEV_AUTOLABEL §B "사람 검수·보정"](BEV_AUTOLABEL.md).
+> **6단계는 `gather_slab.py`를 쓴다** — `gather_annotations.py`가 아니다. 그 스크립트는
+> `label.png`(0/1/2 인덱스)를 요구하는데 슬래브 산출물엔 없어(`occupancy.png`+`visibility.png`로
+> 분리) 전 sample이 `skip (missing ipm_rgb/label)`로 건너뛰어지고 `done: 0 images`로 끝난다.
+> **`occupancy.png`를 `render.blend_label`에 넣지 말 것** — 캔버스 전 셀을 칠해 보정 근거인
+> IPM 바닥을 덮어버린다. 슬래브의 annotation base는 obstacle만 얹은 `overlay.png`이고,
+> `gather_slab.py`가 이를 바이트 그대로 복사해 모은다:
+>
+>     python3 calibration/bev_autolabel/gather_slab.py \
+>       --dataset data/bev/slab/raws1 --out data/bev/annotations
+>
+> **보정 대상은 occupancy 하나뿐이다** — visibility는 보정된 occupancy로 raycast를 다시
+> 돌리면 재생성된다. 상세는 [BEV_AUTOLABEL §B "사람 검수·보정"](BEV_AUTOLABEL.md).
 
 ---
 

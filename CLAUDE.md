@@ -67,6 +67,9 @@
   국소 floor 윈도는 **ego 미터좌표에 고정**(격자 인덱스 기준이면 범위를 옮길 때 바닥 추정이 튀어 허위 obstacle 발생).
   IPM 다중카메라 합성은 기본 `nearest`(셀별 최근접 1대, 겹침 유령상 감소)·`--blend average` 선택 가능.
   **슬래브 라벨(LiDAR 라벨 현행판)**: `slab_label.py`+`slab_io.py`+`slab_render.py`+`generate_slab.py`
+  +`gather_slab.py`(단계3 대응. **`gather_annotations.py`는 슬래브에 안 먹는다** — `label.png`를 요구하는데 없다.
+  `overlay.png`=**obstacle만** 얹은 CVAT base 라 합성 없이 바이트 그대로 복사해 모은다. 보정 대상은 occupancy 하나뿐,
+  visibility 는 보정본 raycast 로 재생성)
   → `data/bev/slab/<name>/sample_NNNNNN/{slab.pcd,occupancy.png,visibility.png,ipm_rgb.png,overlay.png,
   review.png,cam_{front,left,right}.jpg,meta.json}`. **기본 `--xf 4.0 --xr 2.0 --yh 3.0` = 120×120**
   — §A(`generate.py`)의 80×80과 **다른 그리드**이니 한 데이터셋에 섞지 말 것.

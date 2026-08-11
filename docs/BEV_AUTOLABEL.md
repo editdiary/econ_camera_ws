@@ -552,13 +552,23 @@ drivable(신뢰 영역), 빨강=보이는 장애물 표면, 갈색=가려진 장
 ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바깥을 봐서 생기는 근거리 사각
 (실측 가시 시작 0.65~0.80m)과 후방 self 박스가 합쳐진 것이다.
 
-### 사람 검수·보정 — `gather_annotations.py` 는 쓰지 않는다
+### 사람 검수·보정 — `gather_slab.py` 로 모은다 (`gather_annotations.py` 아님)
+
+    cd calibration/bev_autolabel
+    python3 gather_slab.py --dataset ../../data/bev/slab/raws1 --out ../../data/bev/annotations
+
+→ `data/bev/annotations/raws1/{label,review}/sample_NNNNNN.png`. `label/`은 각 sample 의
+`overlay.png`를 **바이트 그대로 복사**한 것이고(overlay.png 자체가 이미 네이티브 120×120·
+장식 없는 annotation base 라 합성할 게 없다. 재인코딩하면 CVAT 마스크가 곧 정답인 base 의
+화소가 바뀐다), `review/`는 `review.png` 복사다. 옵션: `--name`(하위 폴더 이름) ·
+`--review-scale`(기본 1=원본 그대로, 0=review 생략).
 
 §A 의 `gather_annotations.py`는 슬래브 산출물에 **동작하지 않는다**(설계상 대상 밖이지
 버그가 아니다). 그 스크립트는 sample 마다 `label.png`(0/1/2 인덱스 팔레트)를 요구하는데
 (`gather_annotations.py:78`) 슬래브 산출물엔 `label.png`가 없다 — `occupancy.png`+
 `visibility.png` 두 채널로 나뉘어 있다. 그래서 전 sample이 `skip (missing ipm_rgb/label)`로
-건너뛰어지고 `done: 0 images`로 끝난다.
+건너뛰어지고 `done: 0 images`로 끝난다. 두 포맷은 그리드도 다르므로(80×80 vs 120×120)
+한 스크립트로 합치지 않고 따로 둔다.
 
 **`occupancy.png`를 `render.blend_label`에 넣지 말 것.** `blend_label`은 `mm = (label==0)|
 (label==1)` 로 0/1 값을 전부 칠한다 — `occupancy.png`는 0/1 두 값뿐이므로 **캔버스 전 셀을**
@@ -566,10 +576,7 @@ ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바�
 obstacle 만 얹고 바닥은 남기는 `overlay.png`가 이미 있으므로(§ 산출물, `sr.blend_slab`)
 이걸 써야 한다.
 
-**슬래브 데이터셋의 annotation base 수집은 `overlay.png` 파일 복사다** — 전용 gather 스크립트
-없이, dataset 의 각 `sample_NNNNNN/overlay.png`를 그대로 CVAT 업로드 폴더로 복사하면 된다
-(예: `cp data/bev/slab/<name>/sample_*/overlay.png <업로드폴더>/` 후 파일명에 sample 번호를
-남기도록 정리). 참고용 확대 검수뷰가 필요하면 `slab_sheet.py`의 `_sheet_review.png`를 쓴다.
+궤적 전체를 한 장으로 훑는 검수는 `slab_sheet.py`의 `_sheet_review.png`가 따로 있다.
 
 ### 파이프라인
 
