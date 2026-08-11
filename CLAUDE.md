@@ -67,7 +67,9 @@
   국소 floor 윈도는 **ego 미터좌표에 고정**(격자 인덱스 기준이면 범위를 옮길 때 바닥 추정이 튀어 허위 obstacle 발생).
   IPM 다중카메라 합성은 기본 `nearest`(셀별 최근접 1대, 겹침 유령상 감소)·`--blend average` 선택 가능.
   **슬래브 라벨(LiDAR 라벨 현행판)**: `slab_label.py`+`slab_io.py`+`slab_render.py`+`generate_slab.py`
-  → `data/bev/slab/<name>/sample_NNNNNN/{slab.pcd,occupancy.png,visibility.png,review.png}`.
+  → `data/bev/slab/<name>/sample_NNNNNN/{slab.pcd,occupancy.png,visibility.png,ipm_rgb.png,overlay.png,
+  review.png,cam_{front,left,right}.jpg,meta.json}`. **기본 `--xf 4.0 --xr 2.0 --yh 3.0` = 120×120**
+  — §A(`generate.py`)의 80×80과 **다른 그리드**이니 한 데이터셋에 섞지 말 것.
   map_clean.pcd 에서 body 프레임 3D crop → 하위1% z 부터 0.8m 슬래브 → 2D 기둥 count≥3
   occupancy + (2D raycast ∧ 카메라 관측가능성 ∧ ¬self박스) visibility. 옛 `label.png`(0/1/2) 대체.
   카메라가 수평을 봐서 실제 지면에서 반경 0.5m 완전 사각·1.0m 부분 사각이다. 카트 자기 가림은

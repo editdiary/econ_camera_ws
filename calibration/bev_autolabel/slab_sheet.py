@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """검수용 컨택트시트 + reach 통계. 사람이 눈으로 볼 이미지를 폴더에 저장한다.
 
-사용: python3 data/bev/slab_check/make_sheet.py data/bev/slab_check/raws3
+사용: cd calibration/bev_autolabel && python3 slab_sheet.py ../../data/bev/slab/raws3
 산출: <dir>/_sheet_review.png  (궤적 전체에 걸친 review.png 격자)
       <dir>/_sheet_stack.png   (한 샘플의 occupancy/visibility/review 나란히)
       <dir>/_stats.txt         (샘플별 z_ref·obstacle·visible·reach)

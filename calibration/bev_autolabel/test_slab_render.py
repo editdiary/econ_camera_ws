@@ -89,3 +89,19 @@ def test_center_reach_hits_front_edge():
     vis[0:spec.R_EGO, b["C_EGO"]] = True          # 맨 앞줄(행 0)까지 전부 보임
     far, _ = ss.center_reach(vis, b)
     assert far == pytest.approx(spec.XF)          # 1.0m
+
+
+def test_blend_slab_tints_obstacle_only_regardless_of_visibility():
+    ipm = np.full((2, 3, 3), 100, np.uint8)
+    occ = np.array([[0, 1, 0], [1, 0, 1]], np.uint8)     # 0=obstacle 1=drivable
+    out = sr.blend_slab(ipm, occ, alpha=0.5)
+    assert (out[occ == 1] == 100).all()                   # drivable → IPM 원본 그대로
+    assert not (out[occ == 0] == 100).any()               # obstacle → 전부 색이 얹힌다
+    # 보정 대상은 occupancy 뿐이므로 visibility 는 인자로 받지 않는다(raycast 로 재생성)
+    assert "visibility" not in sr.blend_slab.__code__.co_varnames
+
+
+def test_blend_slab_alpha_zero_is_untouched_ipm():
+    ipm = np.full((2, 2, 3), 77, np.uint8)
+    occ = np.zeros((2, 2), np.uint8)
+    assert (sr.blend_slab(ipm, occ, alpha=0.0) == 77).all()

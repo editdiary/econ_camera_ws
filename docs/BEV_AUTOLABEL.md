@@ -486,6 +486,11 @@ LiDAR-on-image 진단은 별도 `overlay_diag.py`(맵 점을 `chain.project`로 
 
 설계 근거·실측값: `docs/superpowers/specs/2026-08-10-bev-slab-label-design.md`
 
+**BEV 범위는 §A 와 다르다.** `generate_slab.py` 의 기본값은 `--xf 4.0 --xr 2.0 --yh 3.0` →
+**120×120**(`RES`=0.05 고정, §A 와 동일). §A(`generate.py`)의 기본은 `--xf 3.0 --xr 1.0 --yh 2.0`
+= **80×80** — 서로 다른 그리드다. 두 CLI 의 산출물을 한 학습 데이터셋에 섞지 말 것(§A=80×80,
+§B=120×120, 진짜 값은 각 sample 의 `meta.json`→`bev`→`NX/NY` 로 확인).
+
 ### 실행
 
     cd calibration/bev_autolabel
@@ -497,10 +502,34 @@ LiDAR-on-image 진단은 별도 `overlay_diag.py`(맵 점을 `chain.project`로 
       --self-mask-dir ../../data/calib_260723/self_mask \
       --out ../../data/bev/slab/raws3
 
+IPM 관련 옵션: `--cam-height 0.87`(IPM 지면 평면용 카메라 렌즈 높이[m] 실측값, IPM 정확도의
+핵심) · `--blend nearest`(기본, 셀별 최근접 1대)|`average` · `--alpha 0.30`(obstacle
+오버레이 불투명도, IPM 이 잘 보이도록 낮게 잡음) · `--no-ipm`(IPM 생성을 꺼서 LiDAR
+라벨만 빠르게 뽑을 때).
+
 ### 산출물
 
     sample_NNNNNN/{slab.pcd, crop.pcd(--save-crop), occupancy.png, visibility.png,
-                   review.png, cam_{front,left,right}.jpg, meta.json} + dataset.csv
+                   ipm_rgb.png, overlay.png, review.png,
+                   cam_{front,left,right}.jpg, meta.json} + dataset.csv
+
+`ipm_rgb.png` — 3어안을 지면 평면(z0=C_z−cam_height)에 IPM 투영한 BEV RGB 캔버스(NX×NY,
+빈 셀=0). LiDAR 는 바닥을 못 봐 occupancy/visibility 만으로는 바닥이 실제로 통로인지
+사람이 판단할 수 없다 — 바닥 모습은 이 캔버스로만 보인다.
+
+`overlay.png` — `sr.blend_slab(ipm_rgb, occupancy, alpha)`. **네이티브 해상도(NX×NY)·
+장식 없음** = CVAT annotation base. **obstacle(occ=0) 셀만** 빨강을 `alpha`(기본 0.30)로
+얹고 drivable 은 IPM 원본 그대로 둔다 — 잉크는 보정이 필요한 곳에만, 바닥 판단 근거인
+IPM 은 최대한 살린다.
+
+**보정 대상은 occupancy 하나뿐이다.** visibility 는 보정된 occupancy 로
+`bev_label.raycast_visible` 을 다시 돌리면 재생성되므로 annotation base 에 실을 이유가
+없다(오히려 사람이 고칠 대상을 헷갈리게 만든다). visibility 는 `review.png` 왼쪽 4색
+패널과 `visibility.png` 로 계속 확인할 수 있다.
+
+> 이전 판은 `visibility=1` 셀만 칠했다. raycast 가 장애물 **앞면에서 멈추므로** 보이는
+> 셀은 거의 전부 drivable 이고, raws3 98샘플 실측에서 빨강이 칠해진 셀은 obstacle 전체의
+> **4%**(전체 캔버스의 0.9%)뿐이었다 — 사실상 obstacle 이 안 보이는 base 였다.
 
 검수 산출물은 `slab_sheet.py` 로 따로 만든다(생성 CLI 가 자동 실행하지 않는다):
 
@@ -513,12 +542,34 @@ visibility/review 나란히)·`_stats.txt`(샘플별 z_ref·obstacle·visible·c
 학습에서 visibility 를 loss 마스크로 쓰면 미관측 영역이 자동 배제된다. occupancy 에
 unknown 클래스를 두지 않는 이유가 이것이다.
 
-`review.png` 는 **상단에 원본 3어안(left/front/right) 스트립** + 하단에 BEV 4색이다.
-4색: 초록=보이는 drivable(신뢰 영역), 빨강=보이는 장애물 표면, 갈색=가려진 장애물, 검정=미관측.
-원본과 BEV 를 한 장에서 대조할 수 있어야 라벨이 진짜 맞는지 사람이 판단할 수 있다.
+`review.png` 는 **상단에 원본 3어안(left/front/right) 스트립** + 하단에 BEV 두 패널을
+나란히(`4color(occ+vis)` | `ipm+occupancy`, 각 패널 제목 표시). 왼쪽 4색: 초록=보이는
+drivable(신뢰 영역), 빨강=보이는 장애물 표면, 갈색=가려진 장애물, 검정=미관측. 오른쪽은
+`overlay.png` 를 확대 격자·미터축·ego 마커를 얹어 검수하기 쉽게 만든 것(`--no-ipm` 이면
+오른쪽 패널 없이 왼쪽 4색 단독). 원본·4색 라벨·IPM 바닥을 한 장에서 대조할 수 있어야
+라벨이 진짜 맞는지 사람이 판단할 수 있다.
 
 ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바깥을 봐서 생기는 근거리 사각
 (실측 가시 시작 0.65~0.80m)과 후방 self 박스가 합쳐진 것이다.
+
+### 사람 검수·보정 — `gather_annotations.py` 는 쓰지 않는다
+
+§A 의 `gather_annotations.py`는 슬래브 산출물에 **동작하지 않는다**(설계상 대상 밖이지
+버그가 아니다). 그 스크립트는 sample 마다 `label.png`(0/1/2 인덱스 팔레트)를 요구하는데
+(`gather_annotations.py:78`) 슬래브 산출물엔 `label.png`가 없다 — `occupancy.png`+
+`visibility.png` 두 채널로 나뉘어 있다. 그래서 전 sample이 `skip (missing ipm_rgb/label)`로
+건너뛰어지고 `done: 0 images`로 끝난다.
+
+**`occupancy.png`를 `render.blend_label`에 넣지 말 것.** `blend_label`은 `mm = (label==0)|
+(label==1)` 로 0/1 값을 전부 칠한다 — `occupancy.png`는 0/1 두 값뿐이므로 **캔버스 전 셀을**
+칠해 IPM 바닥을 덮어버린다. 사람이 보정 근거로 삼을 게 사라진다. 슬래브 데이터셋에는
+obstacle 만 얹고 바닥은 남기는 `overlay.png`가 이미 있으므로(§ 산출물, `sr.blend_slab`)
+이걸 써야 한다.
+
+**슬래브 데이터셋의 annotation base 수집은 `overlay.png` 파일 복사다** — 전용 gather 스크립트
+없이, dataset 의 각 `sample_NNNNNN/overlay.png`를 그대로 CVAT 업로드 폴더로 복사하면 된다
+(예: `cp data/bev/slab/<name>/sample_*/overlay.png <업로드폴더>/` 후 파일명에 sample 번호를
+남기도록 정리). 참고용 확대 검수뷰가 필요하면 `slab_sheet.py`의 `_sheet_review.png`를 쓴다.
 
 ### 파이프라인
 
@@ -559,6 +610,7 @@ ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바�
 | 궤적셀이 obstacle 인 비율 | < 2% (라벨이 실제 주행과 모순되지 않는지) |
 | 중앙축 `reach_far` | 중앙값 XF 도달, 4.0m 도달 80% 이상 (`slab_sheet.py` 가 계산) |
 | `cam_ok` | 93~95%. 100% 에 가까우면 투영 평면이 틀렸다는 신호 |
+| `visible_pct`(sample 전체) | 정상(중앙축 완전 가시) 샘플대엔 18~25%가 뜬다. 하지만 694개 전체 중앙값은 **5.0%**(§ 알려진 한계 — visibility 수율 참고) — 개별 sample 이 이보다 낮다고 곧 불량은 아니다(가려짐을 정직하게 반영한 것). 수율을 가늠할 때는 이 중앙값·`vis<5%` 비율을 같이 봐야 한다 |
 
 ### 하지 말 것
 
@@ -580,19 +632,26 @@ ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바�
 (실패 샘플 0, `skip (missing image)` 없음). `<name>` 은 bag 이름과 동일, 산출물은
 `data/bev/slab/<name>/`.
 
-| bag | n | z_ref 중앙 | obstacle 중앙 | cam_ok 범위 | vis_start 범위* | reach_far 중앙 | 4.0m 도달율 |
-|---|---|---|---|---|---|---|---|
-| raws1 | 98 | +0.045 | 26.9% | 93.5~94.8% | 0.70~0.75m | 2.58m | 21% |
-| raws2 | 101 | +0.049 | 26.8% | 93.5~95.2% | 0.65~0.75m | 4.00m | 62% |
-| raws3 | 98 | +0.048 | 22.2% | 92.8~95.3% | 0.65~0.80m | 4.00m | 85% |
-| rawos1 | 99 | +0.045 | 28.0% | 92.9~95.0% | 0.70~0.80m | 4.00m | 77% |
-| rawos2 | 104 | +0.041 | 28.1% | 92.7~94.8% | 0.70~0.80m | 2.08m | 14% |
-| rawos3 | 96 | +0.045 | 22.5% | 92.9~95.3% | 0.65~0.80m | 4.00m | 82% |
-| rawos4 | 98 | +0.052 | 22.3% | 92.5~94.8% | 0.70~0.80m | 4.00m | 87% |
+| bag | n | z_ref 중앙 | obstacle 중앙 | cam_ok 범위 | vis_start 범위* | reach_far 중앙 | 4.0m 도달율 | vis% 중앙† | vis<5% 건수† |
+|---|---|---|---|---|---|---|---|---|---|
+| raws1 | 98 | +0.045 | 26.9% | 93.5~94.8% | 0.70~0.75m | 2.58m | 21% | 1.5% | 89 |
+| raws2 | 101 | +0.049 | 26.8% | 93.5~95.2% | 0.65~0.75m | 4.00m | 62% | 3.7% | 81 |
+| raws3 | 98 | +0.048 | 22.2% | 92.8~95.3% | 0.65~0.80m | 4.00m | 85% | 18.7% | 1 |
+| rawos1 | 99 | +0.045 | 28.0% | 92.9~95.0% | 0.70~0.80m | 4.00m | 77% | 3.9% | 80 |
+| rawos2 | 104 | +0.041 | 28.1% | 92.7~94.8% | 0.70~0.80m | 2.08m | 14% | 1.1% | 91 |
+| rawos3 | 96 | +0.045 | 22.5% | 92.9~95.3% | 0.65~0.80m | 4.00m | 82% | 17.6% | 2 |
+| rawos4 | 98 | +0.052 | 22.3% | 92.5~94.8% | 0.70~0.80m | 4.00m | 87% | 17.9% | 4 |
+| **합계** | **694** | | | | | | | **5.0%** | **348(50%)** |
 
 *중앙축이 완전히 가려져 `reach_far`·`vis_start` 가 둘 다 0.00 이 되는 센티널 샘플은
 제외(raws3=0개 ~ rawos2=20개/104). 둘 다 0 인 행은 "근거리부터 보임"이 아니라
 "중앙축이 아예 안 보임"이므로 그대로 평균 내면 안 된다.
+
+†`vis%`=`dataset.csv`의 `visible_pct`(sample 전체 대비 가시 셀 비율, `vis_start`와 달리 중앙축이
+아닌 BEV 전체 기준). `vis<5% 건수`는 그 sample 의 절반이 통째로 마스킹 대상급으로 어둡다는 뜻.
+raws3·rawos3·rawos4(vis% 중앙 17~19%)는 건강한 대역이지만, 나머지 4개 bag(raws1·raws2·
+rawos1·rawos2)은 vis% 중앙이 1~4%로 훨씬 낮다 — 이 4개가 694개 중 다수(대략 절반 이상)를
+차지해 전체 중앙값을 5.0%까지 끌어내린다. §알려진 한계 — visibility 수율 참고.
 
 `z_ref`·obstacle·`cam_ok`·`vis_start` 는 7개 bag 전부 raws3 기준선 범위 안. rawos 4종의
 world z 드리프트는 body crop 이 예상대로 상쇄해 `z_ref` 가 raws 와 같은 대역에 남는다.
@@ -609,3 +668,70 @@ rawos1 은 77%로 근접, raws2 는 62%, **raws1(21%)·rawos2(14%) 는 크게 �
 있다는 실측치**로 판단한다 — 라벨링 대상 bag 이 다른 통로/구간을 지나므로 발생하는
 정상적인 bag 간 차이. 학습 시 이 차이를 인지하고 사용해야 한다(예: reach_far 낮은 bag 은
 근거리 회피 판단 위주 샘플로 활용).
+
+다만 통로가 좁다는 설명은 원인의 일부다 — raws1·rawos2 의 낮은 reach 샘플 상당수는 ego
+셀 자체가 obstacle 이 되어 raycast 가 즉시 끊기는 현상과 겹쳐 있다(매핑 드리프트 + 슬래브
+높이의 잎 돌출). 세 원인이 겹친 것이며 어느 하나로 환원되지 않는다 — 상세는 바로 아래
+'알려진 한계 — visibility 전역 0 샘플' 절 참고.
+
+### 알려진 한계 — visibility 수율 (전역 0 은 6.5%, 저수율 전반은 훨씬 넓다)
+
+`visibility` 가 전역 0 이라 학습에서 통째로 마스킹되는 샘플이 있다. bag 별 분포:
+raws1 14 / raws2 6 / raws3 **0** / rawos1 3 / rawos2 19 / rawos3 2 / rawos4 1(694 중 45개, 6.5%).
+그중 ego 셀 자체가 obstacle 인 경우가 25개(3.6%)다.
+
+**이건 전체 그림의 일부일 뿐이다.** "전역 0"만 보면 문제가 6.5%로 보이지만, 694개 전체의
+`visible_pct` 중앙값은 **5.0%**이고 **50%(348개)가 5% 미만**이다(§B 7개 bag 검증 표의
+`vis% 중앙`·`vis<5% 건수` 컬럼). "정상 샘플"이라 부르는 18~25% 대역(raws3·rawos3·rawos4)에
+도달하는 건 26%(181개)뿐이다. 즉 §B 범위로 데이터셋 규모를 가늠하면, 실제 학습에 쓸 만한
+고가시 영역은 여기 적힌 것보다 대략 한 자릿수 작게 잡아야 한다 — 특히 raws1·raws2·rawos1·
+rawos2 4개 bag은 vis% 중앙이 1~4%대로 낮아 대부분의 샘플이 소량의 좁은 가시 영역만 갖는다.
+그렇다고 이 셀들이 틀린 라벨은 아니다 — 가려짐을 정직하게 마스킹한 결과이며, 검증 기준선인
+raws3 가 마침 7종 중 가장 건강한 bag이라는 점도 같이 감안해야 한다.
+
+**메커니즘**: `raycast_visible` 은 ego 셀에서 출발해 첫 obstacle 셀에서 멈춘다. 그래서 ego 셀이
+obstacle 이면 모든 ray 가 즉시 끊겨 visibility 가 전역 0 이 된다.
+
+**원인은 셋이 겹친 것**이며 기하로 고칠 수 없다.
+1. **좁은 통로**: 해당 bag 의 obstacle 셀 비율이 애초에 높다(raws1 26.9%·rawos2 28.1% vs raws3 22.2%).
+2. **매핑 드리프트**: 낮은 reach 샘플이 연속 구간으로 뭉쳐 나온다(raws1 66~70·74·78).
+3. **잎의 불규칙한 돌출**: 슬래브가 실제 0.87~1.67m 밴드라, 그 높이에서 잎이 통로로 넘어오면
+   BEV 에서 통로가 실제보다 좁게 찍힌다. 바닥은 비어 있는데도 그렇다.
+
+**ego 반경을 비우는 수정은 하지 않는다.** 실측: raycast 도달률이 0.9% → (r0.3 비움) 5.9%,
+신뢰영역(r>0.7)만 보면 3.9% 다. 정상 샘플이 18~25% 이므로 회복이 미미하다. 지금처럼
+`visibility=0` 으로 두면 라벨이 "여기서 학습하지 마라"를 정직하게 말하는데, 4% 짜리 어중간한
+라벨로 바꾸면 걸러내기 어려워진다 — 명확한 실패가 애매한 성공이 되는 쪽이 QC 에 더 나쁘다.
+
+**대응**: `overlay.png`(IPM+obstacle) 위에서 사람이 **occupancy 를** 보정한다. 통로를 잘못 막은
+빨강을 지우면 되고, 바닥은 IPM 원본이 그대로 보이므로 판단 근거가 있다. **visibility 는 보정
+대상이 아니다** — 고친 occupancy 로 `raycast_visible` 을 다시 돌리면 따라온다. 즉 여기 적힌
+전역 0 문제도 occupancy 보정으로 함께 풀린다. 찾는 방법:
+
+    awk '$4+0 < 1.0 {print $1, $4}' data/bev/slab/<name>/_stats.txt   # vis% < 1.0
+
+**reach 가 낮은 bag 의 해석**: raws1 21%·rawos2 14% 는 4.0m 도달률이 낮지만, 그중 대부분이
+이 현상이다(raws1 낮은 reach 20건 중 14건, rawos2 23건 중 19건). 통로가 좁은 것도 사실이고
+그 위에 드리프트·잎 돌출이 겹친 결과다 — 어느 하나로 환원되지 않는다.
+
+### 알려진 한계 — IPM 과 라벨 그리드의 정합 오차
+
+의도적으로 손대지 않은 `ipm.py`(§ Constraints)에 이미 있던 특성 셋. 서로 다른 증상이지만
+전부 같은 이음매(라벨 격자 ↔ IPM 투영)에서 나온다.
+
+- **관측가능 판정과 IPM 투영이 FoV/마스크 경계에서 어긋날 수 있다.** `camera_observable`(정투영)과
+  `ipm_project_rgb`(역투영)은 서로 다른 계산 경로라, 경계 부근 셀은 `visibility=1`인데 IPM
+  데이터가 없어(검정) `overlay.png`에서 색이 무데이터 검정 위에 얹힐 수 있다.
+- **반 셀(2.5cm) 오프셋**: `bev_label.rc_of`는 `np.floor`로, `ipm.ipm_project_rgb`는
+  `np.round`로 좌표→셀 인덱스를 계산한다(`RES`=0.05m 기준 반 셀 차이). `overlay.png`가 사람이
+  직접 그리는 CVAT base이므로, 라벨 경계와 IPM 바닥 텍스처가 딱 그 셀만큼 어긋나 보일 수 있다.
+- **지면 평면 기준점이 두 곳**: `--ground-offset`(관측가능성 판정, 기본 0.87)과 `--cam-height`
+  (IPM 투영, 기본 0.87)는 이름은 다르지만 같은 지면을 가리키려는 값이다. 그런데 전자는
+  `z_ref − ground_offset`(**sample 별** LiDAR 하위1% 기준)로, 후자는 `C_z − cam_height`
+  (**카메라 광중심 고정** 기준)로 계산돼 기준면 자체가 다르다. 694개 샘플의 `z_ref` 실측 범위는
+  −0.090~+0.116m 로, 두 평면이 최대 ~12cm 벌어질 수 있다는 뜻이다. 둘 다 기본값이 같다고
+  한쪽만 조정하면(예: `--cam-height`만 바꾸기) 이 간극이 더 벌어진다.
+
+셋 다 라벨 자체를 틀리게 만들진 않지만, 사람이 `overlay.png`를 보고 손으로 보정할 때 "라벨
+경계가 왜 바닥 텍스처와 안 맞지"라고 헷갈릴 수 있는 지점이다 — 보정 시 셀 1개 안팎의 어긋남은
+이 정합 오차이지 라벨 오류가 아니라는 점을 감안한다.

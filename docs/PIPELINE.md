@@ -36,6 +36,9 @@
 | 5. auto-label(라벨+IPM) | `generate.py` | `sample_*/{label.png,ipm_rgb.png,overlay.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §A.4](BEV_AUTOLABEL.md) |
 | 6. 최종 확정 | `gather_annotations.py` → (CVAT) | `annotations/<name>/{label,review}/` → `label/` 업로드·보정 → 최종 데이터셋 | [BEV_AUTOLABEL §A.6·§10](BEV_AUTOLABEL.md) |
 
+> 위 5·6단계는 §A(`generate.py`) 경로 기준이다. **슬래브 라벨(`generate_slab.py`, §B)은
+> 5·6단계가 다르다** — 아래 5단계 절 끝의 안내와 [BEV_AUTOLABEL §B "사람 검수·보정"](BEV_AUTOLABEL.md) 참고.
+
 > **주기 구분**: 1a·1b(캘리브)는 **리그(카메라·라이다 장착)를 바꾸지 않는 한 1회**만 하고 이후
 > 모든 bag이 그 `calib.yaml`을 공유한다. 2~6은 **수집한 bag마다** 반복한다.
 >
@@ -287,6 +290,34 @@ python3 generate.py \
 - `review.png` — 상단 원본 3어안(좌·전·우) + 하단 확대 검수뷰(9배+미터축·격자·ego, 사람 눈 검수용),
 - `cam_{front,left,right}.jpg` — 원본 3이미지, `meta.json` — pose·stamp·BEV 규격·파라미터(z_gate·kf_step·cam_height·blend).
 - 최상위 `dataset.csv`(sample↔frame↔stamp). 상세·규격·주의: [BEV_AUTOLABEL §A·§4·§7](BEV_AUTOLABEL.md).
+
+> **LiDAR 라벨 현행판은 `generate_slab.py`다.** 위 `generate.py`(단일 라벨 0/1/2)는 §A 의
+> 초기 경로이고, **슬래브 기반(occupancy+visibility 2채널) `generate_slab.py`가 현재 사용하는
+> 버전**이다:
+> ```bash
+> python3 generate_slab.py \
+>   --map-dir ../../data/sj_bags/<날짜>/maps_selfmask/<name>_mapping \
+>   --extract-dir ../../data/extracted/<name> \
+>   --calib ../../data/calib_260723/calib.yaml --orient ../../data/calib_260723/orientation.json \
+>   --self-mask-dir ../../data/calib_260723/self_mask \
+>   --out ../../data/bev/slab/<name>
+> ```
+> **BEV 범위 기본값이 §A 와 다르다** — `generate.py`(§A)는 `--xf 3.0 --xr 1.0 --yh 2.0`=80×80,
+> `generate_slab.py`(§B)는 `--xf 4.0 --xr 2.0 --yh 3.0`=**120×120**(`RES`=0.05 고정, 공통).
+> 두 CLI 출력을 한 데이터셋에 섞지 말 것 — 실제 값은 sample 의 `meta.json`→`bev`로 확인.
+>
+> 산출물은 `occupancy.png`(0=obstacle/1=drivable)·`visibility.png`(0=unseen/1=visible)·
+> `ipm_rgb.png`(IPM RGB 캔버스)·`overlay.png`(네이티브 해상도 CVAT base)·`review.png`(카메라 행 +
+> `[4color(occ+vis) | ipm+label]` 두 패널). 상세·판정 기준·알려진 한계(visibility 수율)는
+> [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md).
+>
+> **6단계(최종 확정)는 슬래브 출력에 그대로 적용되지 않는다.** `gather_annotations.py`는
+> `label.png`(0/1/2 인덱스)를 요구하는데 슬래브 산출물엔 없다(`occupancy.png`+`visibility.png`로
+> 분리) — 전 sample이 `skip (missing ipm_rgb/label)`로 건너뛰어지고 `done: 0 images`로 끝난다.
+> **`occupancy.png`를 `render.blend_label`에 넣지 말 것** — `visibility=0`(미관측) 셀까지 칠해
+> 모르는 영역을 아는 것처럼 보이는 CVAT base가 된다. 슬래브 데이터셋의 annotation base는 이미
+> 가시성으로 게이팅된 `overlay.png`이며, 전용 gather 스크립트 없이 각 `sample_*/overlay.png`를
+> 업로드 폴더로 복사해서 모은다. 상세는 [BEV_AUTOLABEL §B "사람 검수·보정"](BEV_AUTOLABEL.md).
 
 ---
 

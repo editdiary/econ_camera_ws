@@ -38,6 +38,7 @@ from bev_label import BevSpec, raycast_visible, select_keyframes  # noqa: E402
 import slab_label as sl                                    # noqa: E402
 import slab_io                                             # noqa: E402
 import slab_render as sr                                   # noqa: E402
+import ipm as ipm_mod                                      # noqa: E402
 
 USE = ("front", "left", "right")
 
@@ -89,7 +90,9 @@ def main():
     ap.add_argument("--pct", type=float, default=1.0,
                     help="z_ref 퍼센타일. 5 는 슬래브 바닥을 0.25m 들어올린다")
     ap.add_argument("--min-pts", type=int, default=3)
-    ap.add_argument("--ray-step", type=float, default=0.25)
+    ap.add_argument("--ray-step", type=float, default=0.25,
+                    help="raycast_visible 광선 간격[도], 기본 0.25(bev_label 기본 0.5의 절반이라 "
+                         "레이캐스트 비용 2배). 작을수록 느려진다")
     ap.add_argument("--ground-offset", type=float, default=0.87,
                     help="z_ref 아래 실제 지면까지의 거리[m]. IPM cam_height 와 같은 평면")
     ap.add_argument("--self-mask-classes", default="table",
@@ -103,6 +106,14 @@ def main():
     ap.add_argument("--save-crop", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--review-scale", type=int, default=6)
+    ap.add_argument("--cam-height", type=float, default=0.87,
+                    help="IPM 지면 평면용 카메라 렌즈 높이[m] 실측값. IPM 정확도의 핵심")
+    ap.add_argument("--blend", default="nearest", choices=("nearest", "average"),
+                    help="IPM 다중카메라 합성 방식")
+    ap.add_argument("--alpha", type=float, default=0.30,
+                    help="overlay.png/review.png 의 obstacle 오버레이 불투명도(IPM 우선)")
+    ap.add_argument("--no-ipm", action="store_true",
+                    help="IPM 생성을 끈다(LiDAR 라벨만 빠르게 뽑을 때)")
     a = ap.parse_args()
 
     spec = BevSpec(XF=a.xf, XR=a.xr, YH=a.yh)
@@ -164,6 +175,10 @@ def main():
         # 커버리지' 진단값으로 남아야 박스가 그 수치를 가리지 않는다.
         occupancy, visibility = sl.assemble(obstacle, visible, cam_ok & ~self_box)
 
+        ipm_rgb = None if a.no_ipm else ipm_mod.ipm_canvas(
+            imgs, rig.cams_by_name, rig.T_cam_front, T_front_lidar, a.cam_height,
+            spec, use_names=USE, blend=a.blend)
+
         sd = out / f"sample_{n:06d}"
         sd.mkdir(exist_ok=True)
         for name in USE:
@@ -173,9 +188,13 @@ def main():
             slab_io.write_points(sd / "crop.pcd", head, arr, crop_idx, crop_P)
         sr.save_indexed(sd / "occupancy.png", occupancy, sr.PALETTE_OCC)
         sr.save_indexed(sd / "visibility.png", visibility, sr.PALETTE_VIS)
+        if ipm_rgb is not None:
+            cv2.imwrite(str(sd / "ipm_rgb.png"), ipm_rgb)
+            cv2.imwrite(str(sd / "overlay.png"),
+                        sr.blend_slab(ipm_rgb, occupancy, alpha=a.alpha))
         cv2.imwrite(str(sd / "review.png"),
                     sr.review_png(occupancy, visibility, spec, scale=a.review_scale,
-                                  cam_imgs=imgs))
+                                  cam_imgs=imgs, ipm=ipm_rgb, alpha=a.alpha))
         stats = {"crop_pts": int(len(crop_P)), "slab_pts": int(len(slab_P)),
                  "obstacle_pct": float(obstacle.mean() * 100),
                  "visible_pct": float((visibility == 1).mean() * 100),
@@ -199,7 +218,8 @@ def main():
                          "yh": a.self_box_yh, "cells": int(self_box.sum())},
             "params": {"thick": a.thick, "pct": a.pct, "min_pts": a.min_pts,
                        "ray_step": a.ray_step, "ground_offset": a.ground_offset,
-                       "kf_step": a.kf_step},
+                       "kf_step": a.kf_step, "cam_height": a.cam_height,
+                       "blend": a.blend, "alpha": a.alpha},
             "stats": stats,
         }
         (sd / "meta.json").write_text(json.dumps(meta, indent=2))
