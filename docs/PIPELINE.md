@@ -24,7 +24,7 @@
   4. LIO 매핑          lio_map_bag → map.pcd + trajectory.tum → pcd_denoise → map_clean.pcd
   5. auto-label(라벨+IPM) generate_slab.py → slab/sample_*/{occupancy,visibility,ipm_rgb,overlay,review,cam_*,meta}
   6. 수동 보정 준비       gather_slab.py → annotations/<name>/{label,label_guided,review}/ → CVAT 보정
-  7. 학습 라벨 확정       manual_labels.py → manual_labels/<name>/{occupancy_npy,visibility_npy,png,review}
+  7. 학습 라벨 확정       manual_labels.py → manual_labels/<name>/{rgb_images,occupancy_*,visibility_*,review_png,labels.csv}
 ```
 
 | 단계 | 실행(대표) | 결과물 | 상세 문서 |
@@ -37,7 +37,7 @@
 | 4. 매핑 | `lio_map_bag.sh` → `pcd_denoise.py` | `map.pcd`·`map_clean.pcd` + `trajectory.tum` | [MAPPING.md](MAPPING.md) |
 | 5. auto-label(라벨+IPM) | `generate_slab.py` | `sample_*/{occupancy.png,visibility.png,ipm_rgb.png,overlay.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
 | 6. 수동 보정 준비 | `gather_slab.py` → (CVAT) | `annotations/<name>/{label,review}/` 또는 `label_guided/` 업로드·보정 → `manual_annotated/<name>_120x120_annotation/` export | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
-| 7. 학습 라벨 확정 | `manual_labels.py` | `manual_labels/<name>/{occupancy_npy,visibility_npy,occupancy_png,visibility_png,review_png,labels.csv}` | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
+| 7. 학습 라벨 확정 | `manual_labels.py` | `manual_labels/<name>/{rgb_images,occupancy_npy,visibility_npy,occupancy_png,visibility_png,review_png,labels.csv}` | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
 
 > 5~7단계는 **슬래브 라벨(`generate_slab.py` + `gather_slab.py` + `manual_labels.py`, 기본 120×120)** 기준이다.
 > 구판 경로(`generate.py` + `gather_annotations.py`, 단일 `label.png` 0/1/2, 80×80)는
@@ -373,10 +373,10 @@ python3 slab_sheet.py ../../data/bev/slab/<name>
 
 ## 7단계. 학습용 BEV 라벨 생성 (`manual_labels.py`)
 
-**무엇**: 수동 보정 export 에서 학습에 바로 쓸 `.npy` 라벨을 만든다. occupancy 는 CVAT에서
-보정한 `occupancy` 색을 읽어 `0=obstacle, 1=drivable` 이진 배열로 변환하고, visibility 는
-그 occupancy 를 기준으로 `raycast_visible` 을 다시 돌려 `0=unseen, 1=visible` 로 재생성한다.
-map 기반 occupancy 를 다시 신뢰하지 않는다.
+**무엇**: 수동 보정 export 에서 학습에 바로 쓸 입력 이미지와 `.npy` 라벨을 만든다. occupancy 는
+CVAT에서 보정한 `occupancy` 색을 읽어 `0=obstacle, 1=drivable` 이진 배열로 변환하고,
+visibility 는 그 occupancy 를 기준으로 `raycast_visible` 을 다시 돌려 `0=unseen, 1=visible` 로
+재생성한다. map 기반 occupancy 를 다시 신뢰하지 않는다.
 
 **실행**:
 
@@ -398,17 +398,29 @@ python3 calibration/bev_autolabel/manual_labels.py \
 
 ```text
 data/bev/manual_labels/<name>/
+  rgb_images/sample_NNNNNN/
+    cam_front.jpg
+    cam_left.jpg
+    cam_right.jpg
   occupancy_npy/*.npy      # uint8 (120,120), 0=obstacle, 1=drivable
   visibility_npy/*.npy     # uint8 (120,120), 0=unseen, 1=visible
   occupancy_png/*.png      # class id 보존 preview
   visibility_png/*.png     # class id 보존 preview
-  review_png/*.png         # 4색 occ/vis + IPM overlay 검수용
+  review_png/*.png         # 상단 3어안 + 하단 4색 occ/vis + IPM overlay 검수용
   labels.csv
   README.md
 ```
 
-**최종 산출물**: 학습에 바로 쓰는 확정 BEV occupancy/visibility 데이터셋(이미지 3장 +
-`manual_labels/<name>` 라벨 + sample meta).
+`labels.csv` 는 `sample`, `rgb_dir`, `occupancy_npy`, `visibility_npy`, `occupancy_png`,
+`visibility_png`, `review_png`, 통계 컬럼을 가진다. `rgb_images/` 의 3카메라 JPG는 원본
+sample 폴더에서 재인코딩 없이 복사된다.
+
+`visibility` 는 **수동 occupancy에서 재계산한 순수 2D raycast 결과**다. self-mask와 rear-mask는
+visibility 에 곱하지 않는다. 대신 `review_png` 하단 BEV 패널에 확인용으로만 overlay 한다:
+`data/calib_260723/self_mask/bev_self_mask.png` 는 노란색, `bev_rear_self_box_03.png` 는 magenta.
+두 고정 BEV 마스크는 `meta.json` 의 `self_mask` 경로에서 읽는다.
+
+**최종 산출물**: 학습에 바로 쓰는 확정 BEV occupancy/visibility 데이터셋과 원본 3카메라 입력.
 
 ---
 

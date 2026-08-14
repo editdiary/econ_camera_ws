@@ -91,8 +91,10 @@ pip의 numpy 1.26은 `/usr/local/lib/python3.10/dist-packages`에 깔려 시스�
 
 # CVAT 등에서 보정 후 export 를 data/bev/manual_annotated/raws1_120x120_annotation/ 에 둔 뒤:
 ./docker/run.sh python3 calibration/bev_autolabel/manual_labels.py \
-    --manual-dir data/bev/manual_annotated/raws1_120x120_annotation \
-    --dataset-root data/bev/slab
+    --manual-dir data/bev/manual_annotated/raws1_120x120_annotation
+
+# manual_labels 산출물은 data/bev/manual_labels/raws1/{rgb_images,occupancy_*,visibility_*,review_png,labels.csv}.
+# visibility 는 순수 raycast 결과이고, self/rear 고정 마스크는 review_png 에만 overlay 된다.
 
 # 구판 경로(verify_labels/generate/gather_annotations)도 그대로 돈다 — 의존성이 같다.
 # docker/smoke_test.sh 가 검증하는 건 아직 이 구판 경로다(BEV_AUTOLABEL 부록 A).

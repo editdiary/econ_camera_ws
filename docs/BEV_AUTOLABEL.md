@@ -173,8 +173,8 @@ occupancy 를 보정한 뒤, export 폴더를 아래 형식으로 둔다.
 
     occupancy:61,61,245::
 
-학습에 쓸 2채널 라벨은 `manual_labels.py` 로 만든다. 폴더명에서 `<dataset>` 을 자동 추론하고,
-원본 sample/meta/IPM 은 `data/bev/dataset/<dataset>` 에서 찾는다.
+학습에 쓸 입력 이미지와 2채널 라벨은 `manual_labels.py` 로 만든다. 폴더명에서 `<dataset>` 을
+자동 추론하고, 원본 sample/meta/IPM 은 `data/bev/dataset/<dataset>` 에서 찾는다.
 
     cd calibration/bev_autolabel
     python3 manual_labels.py \
@@ -188,18 +188,33 @@ occupancy 를 보정한 뒤, export 폴더를 아래 형식으로 둔다.
 출력:
 
     data/bev/manual_labels/<dataset>/
+      rgb_images/sample_NNNNNN/
+        cam_front.jpg
+        cam_left.jpg
+        cam_right.jpg
       occupancy_npy/*.npy      # uint8 (NX,NY), 0=obstacle, 1=drivable
       visibility_npy/*.npy     # uint8 (NX,NY), 0=unseen, 1=visible
       occupancy_png/*.png      # 같은 class id 를 보존한 indexed PNG
       visibility_png/*.png     # 같은 class id 를 보존한 indexed PNG
-      review_png/*.png         # 시각 검수용 4색 occ/vis + IPM overlay
+      review_png/*.png         # 상단 3어안 + 하단 4색 occ/vis + IPM overlay
       labels.csv
       README.md
 
 visibility 는 수동 occupancy 에서 `bev_label.raycast_visible` 을 다시 돌려 재생성한다
-(기본 `--ray-step 0.25`). 즉 map 기반 occupancy 를 다시 신뢰하지 않는다. 원본 sample 이
-기본값(`data/bev/dataset/<dataset>`) 밖에 있으면 `--dataset-root` 에 sample 폴더들의 상위
-경로를 넘긴다. 출력 경로나 이름을 바꾸려면 `--out`, `--name` 을 쓴다.
+(기본 `--ray-step 0.25`). **self-mask/rear-mask 는 visibility 에 곱하지 않는다.** 두 마스크는
+학습용 loss mask 가 아니라 사람이 확인하는 `review_png` overlay 용이다. 즉 map 기반 occupancy 를
+다시 신뢰하지 않고, 마스크 영역도 별도 제외하지 않은 "온전한 raycast visibility" 를 저장한다.
+
+`review_png` 는 상단에 원본 `cam_front/left/right.jpg` 3장을 붙이고, 하단 BEV 패널에 고정
+BEV 마스크를 overlay 한다. `meta.json` 의 `self_mask` 경로에서
+`bev_self_mask.png`(노란색)와 `bev_rear_self_box_03.png`(magenta)를 읽는다. 이 파일들은
+`data/calib_260723/self_mask/` 에 고정 자산으로 둔다. 예전 `mask_debug_png/` 산출은 더 이상
+생성하지 않는다.
+
+`rgb_images/<sample>/` 의 3카메라 JPG는 원본 sample 폴더에서 재인코딩 없이 복사된다.
+`labels.csv` 의 `rgb_dir` 컬럼이 이 폴더를 가리킨다. 원본 sample 이 기본값
+(`data/bev/dataset/<dataset>`) 밖에 있으면 `--dataset-root` 에 sample 폴더들의 상위 경로를
+넘긴다. 출력 경로나 이름을 바꾸려면 `--out`, `--name` 을 쓴다.
 
 ### IPM-only 비디오 진단
 
