@@ -105,3 +105,12 @@ def test_blend_slab_alpha_zero_is_untouched_ipm():
     ipm = np.full((2, 2, 3), 77, np.uint8)
     occ = np.zeros((2, 2), np.uint8)
     assert (sr.blend_slab(ipm, occ, alpha=0.0) == 77).all()
+
+
+def test_guided_label_keeps_native_size_and_draws_grid():
+    spec = BevSpec(XF=1.0, XR=1.0, YH=1.0)
+    ipm = np.full((spec.NX, spec.NY, 3), 100, np.uint8)
+    occ = np.ones((spec.NX, spec.NY), np.uint8)
+    out = sr.guided_label(ipm, occ, spec, alpha=0.55)
+    assert out.shape == ipm.shape
+    assert tuple(out[10, 5]) == (70, 70, 70)

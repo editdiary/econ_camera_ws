@@ -33,3 +33,17 @@ def test_scaled_copy_enlarges_with_nearest(tmp_path):
     out = np.array(Image.open(dst).convert("L"))
     assert out.shape == (6, 6)
     assert set(np.unique(out)) == {0, 255}
+
+
+def test_write_guided_label_uses_ipm_and_occupancy_without_resizing(tmp_path):
+    sd = tmp_path / "sample_000000"
+    sd.mkdir()
+    ipm = np.full((40, 40, 3), 100, np.uint8)
+    occ = np.ones((40, 40), np.uint8)
+    _png(sd / "ipm_rgb.png", ipm)
+    _png(sd / "occupancy.png", occ)
+    dst = tmp_path / "guided.png"
+    gs.write_guided_label(sd, dst, gs.BevSpec(XF=1.0, XR=1.0, YH=1.0), alpha=0.55)
+    out = np.array(Image.open(dst).convert("RGB"))
+    assert out.shape == ipm.shape
+    assert tuple(out[10, 5]) == (70, 70, 70)

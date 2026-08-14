@@ -54,6 +54,22 @@ def blend_slab(ipm, occupancy, alpha=0.30):
     return over
 
 
+def guided_label(ipm, occupancy, spec, alpha=0.55):
+    """Native-size IPM+occupancy helper for annotation, with a light 0.5m grid."""
+    out = blend_slab(ipm, occupancy, alpha=alpha)
+    step = 0.5
+    H, W = out.shape[:2]
+    for x_m in np.arange(np.floor(spec.XF / step) * step, -spec.XR - 1e-9, -step):
+        gy = int(round((spec.XF - x_m) / spec.RES))
+        if 0 <= gy < H:
+            cv2.line(out, (0, gy), (W, gy), (70, 70, 70), 1)
+    for y_m in np.arange(np.floor(spec.YH / step) * step, -spec.YH - 1e-9, -step):
+        gx = int(round((spec.YH - y_m) / spec.RES))
+        if 0 <= gx < W:
+            cv2.line(out, (gx, 0), (gx, H), (70, 70, 70), 1)
+    return out
+
+
 def _camera_strip(cam_imgs, width, order=("left", "front", "right")):
     """review_png 상단에 붙일 카메라 가로 배치. 폭 width 에 맞춰 등분·이름표. 없으면 None.
 
