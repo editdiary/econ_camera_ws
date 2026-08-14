@@ -77,7 +77,7 @@ pip의 numpy 1.26은 `/usr/local/lib/python3.10/dist-packages`에 깔려 시스�
 **된다**
 
 ```bash
-# BEV auto-label(현행 = 슬래브 라벨) — 생성 → 검수 시트 → CVAT용 수집
+# BEV auto-label(현행 = 슬래브 라벨) — 생성 → 검수 시트 → CVAT용 수집 → 학습 라벨 확정
 ./docker/run.sh bash -c 'cd calibration/bev_autolabel && python3 generate_slab.py \
     --map-dir ../../data/sj_bags/260722/maps_selfmask/raws1_mapping \
     --extract-dir ../../data/extracted/raws1 \
@@ -87,7 +87,12 @@ pip의 numpy 1.26은 `/usr/local/lib/python3.10/dist-packages`에 깔려 시스�
     --out ../../data/bev/slab/raws1'
 ./docker/run.sh python3 calibration/bev_autolabel/slab_sheet.py data/bev/slab/raws1
 ./docker/run.sh python3 calibration/bev_autolabel/gather_slab.py \
-    --dataset data/bev/slab/raws1 --out data/bev/annotations
+    --dataset data/bev/slab/raws1 --out data/bev/annotations --guided-labels
+
+# CVAT 등에서 보정 후 export 를 data/bev/manual_annotated/raws1_120x120_annotation/ 에 둔 뒤:
+./docker/run.sh python3 calibration/bev_autolabel/manual_labels.py \
+    --manual-dir data/bev/manual_annotated/raws1_120x120_annotation \
+    --dataset-root data/bev/slab
 
 # 구판 경로(verify_labels/generate/gather_annotations)도 그대로 돈다 — 의존성이 같다.
 # docker/smoke_test.sh 가 검증하는 건 아직 이 구판 경로다(BEV_AUTOLABEL 부록 A).

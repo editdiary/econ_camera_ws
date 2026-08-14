@@ -133,13 +133,17 @@ ego 주변 검은 직사각형은 **정상**이다 — 카메라가 수평 바�
 ### 사람 검수·보정 — `gather_slab.py` 로 모은다 (`gather_annotations.py` 아님)
 
     cd calibration/bev_autolabel
-    python3 gather_slab.py --dataset ../../data/bev/slab/raws1 --out ../../data/bev/annotations
+    python3 gather_slab.py \
+      --dataset ../../data/bev/slab/raws1 \
+      --out ../../data/bev/annotations \
+      --guided-labels
 
-→ `data/bev/annotations/raws1/{label,review}/sample_NNNNNN.png`. `label/`은 각 sample 의
+→ `data/bev/annotations/raws1/{label,review,label_guided}/sample_NNNNNN.png`. `label/`은 각 sample 의
 `overlay.png`를 **바이트 그대로 복사**한 것이고(overlay.png 자체가 이미 네이티브 120×120·
 장식 없는 annotation base 라 합성할 게 없다. 재인코딩하면 CVAT 마스크가 곧 정답인 base 의
-화소가 바뀐다), `review/`는 `review.png` 복사다. 옵션: `--name`(하위 폴더 이름) ·
-`--review-scale`(기본 1=원본 그대로, 0=review 생략).
+화소가 바뀐다), `review/`는 `review.png` 복사다. `label_guided/`는 같은 해상도에 obstacle
+alpha 를 높이고 0.5m grid 를 얹은 참고/대체 annotation base 다. 옵션: `--name`(하위 폴더 이름) ·
+`--review-scale`(기본 1=원본 그대로, 0=review 생략) · `--guided-alpha`(기본 0.55).
 
 구판(부록 A)의 `gather_annotations.py`는 슬래브 산출물에 **동작하지 않는다**(설계상 대상 밖이지
 버그가 아니다). 그 스크립트는 sample 마다 `label.png`(0/1/2 인덱스 팔레트)를 요구하는데
@@ -155,6 +159,66 @@ obstacle 만 얹고 바닥은 남기는 `overlay.png`가 이미 있으므로(§ 
 이걸 써야 한다.
 
 궤적 전체를 한 장으로 훑는 검수는 `slab_sheet.py`의 `_sheet_review.png`가 따로 있다.
+
+### 수동 보정본 → 학습용 occupancy/visibility 라벨 생성
+
+CVAT 등에서 `data/bev/annotations/<dataset>/label_guided` 또는 `label` 이미지를 기준으로
+occupancy 를 보정한 뒤, export 폴더를 아래 형식으로 둔다.
+
+    data/bev/manual_annotated/<dataset>_120x120_annotation/
+      labelmap.txt
+      SegmentationClass/sample_NNNNNN.png
+
+`labelmap.txt` 에는 `occupancy` 클래스 색이 있어야 한다. 현재 수동 export 예:
+
+    occupancy:61,61,245::
+
+학습에 쓸 2채널 라벨은 `manual_labels.py` 로 만든다. 폴더명에서 `<dataset>` 을 자동 추론하고,
+원본 sample/meta/IPM 은 `data/bev/dataset/<dataset>` 에서 찾는다.
+
+    cd calibration/bev_autolabel
+    python3 manual_labels.py \
+      --manual-dir ../../data/bev/manual_annotated/raws1_120x120_annotation
+
+    # 원본 sample 이 ../../data/bev/slab/raws1 에 있을 때:
+    python3 manual_labels.py \
+      --manual-dir ../../data/bev/manual_annotated/raws1_120x120_annotation \
+      --dataset-root ../../data/bev/slab
+
+출력:
+
+    data/bev/manual_labels/<dataset>/
+      occupancy_npy/*.npy      # uint8 (NX,NY), 0=obstacle, 1=drivable
+      visibility_npy/*.npy     # uint8 (NX,NY), 0=unseen, 1=visible
+      occupancy_png/*.png      # 같은 class id 를 보존한 indexed PNG
+      visibility_png/*.png     # 같은 class id 를 보존한 indexed PNG
+      review_png/*.png         # 시각 검수용 4색 occ/vis + IPM overlay
+      labels.csv
+      README.md
+
+visibility 는 수동 occupancy 에서 `bev_label.raycast_visible` 을 다시 돌려 재생성한다
+(기본 `--ray-step 0.25`). 즉 map 기반 occupancy 를 다시 신뢰하지 않는다. 원본 sample 이
+기본값(`data/bev/dataset/<dataset>`) 밖에 있으면 `--dataset-root` 에 sample 폴더들의 상위
+경로를 넘긴다. 출력 경로나 이름을 바꾸려면 `--out`, `--name` 을 쓴다.
+
+### IPM-only 비디오 진단
+
+라벨 생성 전후로 카메라 3장의 IPM 투영이 시간축 전체에서 잘 맞는지 빠르게 훑고 싶으면
+`tools/ipm_video_from_extract.py` 를 쓴다. `bag_extract.py` 산출(`frame_*/camN.jpg`, `sets.csv`)만
+소비하고 라벨은 만들지 않는다.
+
+    python3 tools/ipm_video_from_extract.py \
+      --extract-dir data/extracted/raws1 \
+      --calib data/calib_260723/calib.yaml \
+      --orient data/calib_260723/orientation.json \
+      --out data/bev/review/raws1_ipm.mp4 \
+      --xf 4.0 --xr 2.0 --yh 3.0 \
+      --cam-height 0.87 \
+      --blend nearest
+
+기본은 BEV 위에 원본 left/front/right 스트립을 붙인다. 서버에서 빠르게 만들 때는
+`--pixel-step 2` 이상으로 원본 픽셀 샘플링을 줄일 수 있고, BEV만 보고 싶으면
+`--camera-strip none` 을 쓴다.
 
 ### 파이프라인
 
@@ -793,4 +857,3 @@ def bev(t_ns):
 
 **시각화**(3이미지+BEV 합성)는 `label`을 색칠(0→빨강, 1→초록, 2→회색)하고 `name2idx[nm]`로 이미지 매칭.
 LiDAR-on-image 진단은 별도 `overlay_diag.py`(맵 점을 `chain.project`로 3대 이미지에 높이색 투영).
-

@@ -4,7 +4,8 @@
 순서대로 따라 할 수 있게** 전 과정을 하나로 꿴다. 각 단계마다 **① 무엇을 하는가 ② 무엇을 실행
 하는가 ③ 주요 옵션 ④ 결과물**을 적고, 깊은 내용은 해당 상세 문서로 링크한다.
 
-- 최종 산출물: 어안 3대(front/left/right) 이미지 → **ego 중심 BEV occupancy 라벨(기본 80×80, 0=obstacle/1=drivable/2=ignore)** 학습 데이터셋.
+- 최종 산출물: 어안 3대(front/left/right) 이미지 → **ego 중심 BEV occupancy/visibility 라벨(기본 120×120,
+  occupancy 0=obstacle/1=drivable, visibility 0=unseen/1=visible)** 학습 데이터셋.
 - "semi-auto"인 이유: LiDAR+맵과 IPM으로 **초안 라벨을 자동 생성**하되, 100%가 아니므로 **마지막은 사람이 검수·확정**한다.
 
 ---
@@ -22,7 +23,8 @@
   3. 이미지 추출        bag_extract → frame_*/cam{0..3}.jpg + sets.csv
   4. LIO 매핑          lio_map_bag → map.pcd + trajectory.tum → pcd_denoise → map_clean.pcd
   5. auto-label(라벨+IPM) generate_slab.py → slab/sample_*/{occupancy,visibility,ipm_rgb,overlay,review,cam_*,meta}
-  6. 최종 확정            gather_slab → annotations/<name>/ 업로드·CVAT 보정 → 최종 BEV 데이터셋
+  6. 수동 보정 준비       gather_slab.py → annotations/<name>/{label,label_guided,review}/ → CVAT 보정
+  7. 학습 라벨 확정       manual_labels.py → manual_labels/<name>/{occupancy_npy,visibility_npy,png,review}
 ```
 
 | 단계 | 실행(대표) | 결과물 | 상세 문서 |
@@ -34,19 +36,23 @@
 | 3. 추출 | `bag_extract` | `frame_*/cam{0..3}.jpg` + `sets.csv` | [USAGE §6](USAGE.md) |
 | 4. 매핑 | `lio_map_bag.sh` → `pcd_denoise.py` | `map.pcd`·`map_clean.pcd` + `trajectory.tum` | [MAPPING.md](MAPPING.md) |
 | 5. auto-label(라벨+IPM) | `generate_slab.py` | `sample_*/{occupancy.png,visibility.png,ipm_rgb.png,overlay.png,review.png,cam_*.jpg,meta.json}` | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
-| 6. 최종 확정 | `gather_slab.py` → (CVAT) | `annotations/<name>/{label,review}/` → `label/` 업로드·보정 → 최종 데이터셋 | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
+| 6. 수동 보정 준비 | `gather_slab.py` → (CVAT) | `annotations/<name>/{label,review}/` 또는 `label_guided/` 업로드·보정 → `manual_annotated/<name>_120x120_annotation/` export | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
+| 7. 학습 라벨 확정 | `manual_labels.py` | `manual_labels/<name>/{occupancy_npy,visibility_npy,occupancy_png,visibility_png,review_png,labels.csv}` | [BEV_AUTOLABEL §B](BEV_AUTOLABEL.md) |
 
-> 5·6단계는 **슬래브 라벨(`generate_slab.py` + `gather_slab.py`, 기본 120×120)** 기준이다.
+> 5~7단계는 **슬래브 라벨(`generate_slab.py` + `gather_slab.py` + `manual_labels.py`, 기본 120×120)** 기준이다.
 > 구판 경로(`generate.py` + `gather_annotations.py`, 단일 `label.png` 0/1/2, 80×80)는
 > [BEV_AUTOLABEL 부록 A](BEV_AUTOLABEL.md) 로 보관돼 있다 — `data/bev/dataset/` 의 기존
 > 산출물을 해석할 때만 참고하고, 새 데이터 생성에는 쓰지 않는다.
 
 > **주기 구분**: 1a·1b(캘리브)는 **리그(카메라·라이다 장착)를 바꾸지 않는 한 1회**만 하고 이후
-> 모든 bag이 그 `calib.yaml`을 공유한다. 2~6은 **수집한 bag마다** 반복한다.
+> 모든 bag이 그 `calib.yaml`을 공유한다. 2~7은 **수집한 bag마다** 반복한다.
 >
 > **폴더 규약**: 모든 산출물은 `data/`(gitignore) 아래로 모은다. bag별 3쌍을 같은 `<name>`으로 맞춘다 —
 > `data/sj_bags/<날짜>/bags/<bag>` ↔ `.../maps_selfmask/<name>_mapping`(매핑 산출) ↔ `data/extracted/<name>`(추출 이미지).
-> `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun. BEV 산출은 `data/bev/{dataset,review,annotations}/<name>`.
+> `<name>`: `raws{N}`=with-sun, `rawos{N}`=without-sun. BEV 산출은
+> `data/bev/slab/<name>`(auto-label 초안), `data/bev/annotations/<name>`(CVAT 업로드용),
+> `data/bev/manual_annotated/<name>_120x120_annotation`(수동 보정 export),
+> `data/bev/manual_labels/<name>`(학습용 확정 라벨)로 둔다.
 > 260722의 `.../maps/`(구버전, self mask·drain 수정 이전)는 대조용 보관본이다 — **하류는 `maps_selfmask/`를 쓴다**.
 
 ---
@@ -314,11 +320,11 @@ python3 slab_sheet.py ../../data/bev/slab/<name>
 
 ---
 
-## 6단계. 최종 BEV 데이터셋 확정 (사람 보정)
+## 6단계. 수동 보정 준비와 CVAT export
 
 **무엇**: auto-label은 초안이다. 5단계가 이미 **IPM 배경(`ipm_rgb.png`) 위에 obstacle을 얹은
 `overlay.png`** 를 네이티브 해상도로 만들어 두므로, **별도의 카메라 마스킹·IPM 투영 단계 없이**
-사람이 BEV 위에서 라벨을 보정해 확정한다.
+사람이 BEV 위에서 occupancy 경계만 보정한다.
 
 > **왜 마스킹이 사라졌나**: 예전엔 사람이 카메라 3장에 drivable 마스크를 그려 IPM 투영·융합했다
 > (`dataset_flatten`+`ipm_review`). 이제 생성 CLI가 IPM 배경 위에 라벨을 미리 얹어 주므로,
@@ -330,12 +336,21 @@ python3 slab_sheet.py ../../data/bev/slab/<name>
 - **`gather_slab.py`로 `overlay.png`를 한 폴더로 모아 CVAT 등에 업로드**해 그 위에서 경계를 보정:
   ```bash
   python3 calibration/bev_autolabel/gather_slab.py \
-    --dataset data/bev/slab/<name> --out data/bev/annotations
+    --dataset data/bev/slab/<name> --out data/bev/annotations --guided-labels
   # → data/bev/annotations/<name>/label/  (네이티브 120×120) — 이 폴더 그대로 CVAT 업로드
   # → data/bev/annotations/<name>/review/ — 참고용 검수뷰(--review-scale, 기본 1=원본)
+  # → data/bev/annotations/<name>/label_guided/ — obstacle 강조+0.5m grid 참고 base
   ```
-  `label/`은 `overlay.png`를 **바이트 그대로 복사**한 것이다 — 재인코딩하면 정답 base의 화소가
-  바뀐다. 보정 결과(세그멘테이션 마스크)가 **최종 정답**.
+  `label/`은 `overlay.png`를 **바이트 그대로 복사**한 것이다 — 재인코딩하면 annotation base의
+  화소가 바뀐다. `label_guided/`는 같은 해상도에 obstacle을 더 진하게 보이고 0.5m grid를
+  얹은 참고/대체 base다.
+- CVAT export 는 아래 이름으로 둔다. 이 export 는 아직 학습 최종 라벨이 아니라
+  `manual_labels.py` 입력이다.
+  ```text
+  data/bev/manual_annotated/<name>_120x120_annotation/
+    labelmap.txt
+    SegmentationClass/sample_NNNNNN.png
+  ```
 - **보정 대상은 `occupancy` 하나뿐이다.** `visibility`는 보정된 occupancy로
   `bev_label.raycast_visible`을 다시 돌리면 재생성되므로 사람이 손대지 않는다.
 - **주된 보정**: obstacle 경계. `overlay.png`는 빨강을 obstacle에만 `--alpha 0.30`으로 얹고
@@ -352,7 +367,48 @@ python3 slab_sheet.py ../../data/bev/slab/<name>
   5.0%), 전방 동적 물체 미처리, 어안→모델 입력 언디스토션 필요, 데이터 규모(일반화는 여러
   bag/환경 확충 전제). 상세: [BEV_AUTOLABEL §B·§7](BEV_AUTOLABEL.md).
 
-**결과**: 학습에 바로 쓰는 확정 BEV occupancy 데이터셋(이미지 3장 + 최종 라벨 + meta).
+**결과**: 수동 보정된 occupancy export(`manual_annotated/<name>_120x120_annotation`).
+
+---
+
+## 7단계. 학습용 BEV 라벨 생성 (`manual_labels.py`)
+
+**무엇**: 수동 보정 export 에서 학습에 바로 쓸 `.npy` 라벨을 만든다. occupancy 는 CVAT에서
+보정한 `occupancy` 색을 읽어 `0=obstacle, 1=drivable` 이진 배열로 변환하고, visibility 는
+그 occupancy 를 기준으로 `raycast_visible` 을 다시 돌려 `0=unseen, 1=visible` 로 재생성한다.
+map 기반 occupancy 를 다시 신뢰하지 않는다.
+
+**실행**:
+
+```bash
+python3 calibration/bev_autolabel/manual_labels.py \
+  --manual-dir data/bev/manual_annotated/<name>_120x120_annotation
+
+# 원본 sample 이 data/bev/slab/<name> 에 있을 때:
+python3 calibration/bev_autolabel/manual_labels.py \
+  --manual-dir data/bev/manual_annotated/<name>_120x120_annotation \
+  --dataset-root data/bev/slab
+```
+
+폴더명에서 `<name>` 을 자동 추론하고 원본 sample/meta/IPM 은 `data/bev/dataset/<name>` 에서
+찾는다. 원본 sample 을 `data/bev/slab/<name>` 등에 만들었다면 `--dataset-root` 에 실제 sample
+폴더들의 상위 경로를 넘긴다. 출력 위치나 이름을 바꾸려면 `--out`, `--name` 을 명시한다.
+
+**결과**:
+
+```text
+data/bev/manual_labels/<name>/
+  occupancy_npy/*.npy      # uint8 (120,120), 0=obstacle, 1=drivable
+  visibility_npy/*.npy     # uint8 (120,120), 0=unseen, 1=visible
+  occupancy_png/*.png      # class id 보존 preview
+  visibility_png/*.png     # class id 보존 preview
+  review_png/*.png         # 4색 occ/vis + IPM overlay 검수용
+  labels.csv
+  README.md
+```
+
+**최종 산출물**: 학습에 바로 쓰는 확정 BEV occupancy/visibility 데이터셋(이미지 3장 +
+`manual_labels/<name>` 라벨 + sample meta).
 
 ---
 
